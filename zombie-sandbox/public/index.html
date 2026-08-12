@@ -594,6 +594,74 @@
       background: rgba(239,68,68,0.1);
       box-shadow: 0 0 0 2px rgba(239,68,68,0.2);
     }
+
+    /* ====== CAMERA 方向键面板 (D-PAD) ====== */
+    #fab-cam-dpad {
+      display: grid;
+      grid-template-rows: repeat(3, auto);
+      justify-items: center;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      padding: 4px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #fab-cam-dpad .fab-cam-mid-row {
+      display: grid;
+      grid-template-columns: repeat(3, auto);
+      gap: 6px;
+      align-items: center;
+    }
+    .fab-cam-btn {
+      width: 46px;
+      height: 46px;
+      border-radius: 12px;
+      border: 1.5px solid rgba(34,197,94,0.35);
+      background: linear-gradient(180deg, rgba(34,197,94,0.14), rgba(34,197,94,0.04));
+      color: var(--green);
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      transition: transform 0.08s, background 0.1s, box-shadow 0.1s;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    .fab-cam-btn.center {
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      border-color: rgba(239,68,68,0.45);
+      background: linear-gradient(180deg, rgba(239,68,68,0.14), rgba(239,68,68,0.04));
+      color: var(--red);
+    }
+    .fab-cam-btn:active {
+      transform: translateY(1px) scale(0.94);
+      background: rgba(34,197,94,0.22);
+      box-shadow: 0 0 0 2px rgba(34,197,94,0.2);
+    }
+    .fab-cam-btn.center:active {
+      background: rgba(239,68,68,0.2);
+      box-shadow: 0 0 0 2px rgba(239,68,68,0.2);
+    }
+    /* 移动端小屏缩小方向键 */
+    @media (max-width: 768px), (pointer: coarse) {
+      .fab-cam-btn { width: 42px; height: 42px; font-size: 17px; }
+      .fab-cam-btn.center { width: 46px; height: 46px; }
+    }
+    /* 持续按住高亮 */
+    .fab-cam-btn.is-held {
+      background: rgba(34,197,94,0.35);
+      box-shadow: 0 0 0 3px rgba(34,197,94,0.3) inset;
+    }
+    .fab-cam-btn.center.is-held {
+      background: rgba(239,68,68,0.32);
+      box-shadow: 0 0 0 3px rgba(239,68,68,0.3) inset;
+    }
+
     /* 悬浮球面板里的类型按钮激活态和toolbar一致（继承色） */
     .fab-btn.survivor-male.active   { border-color: var(--green);   color: var(--green); }
     .fab-btn.survivor-female.active { border-color: #f472b6;        color: #f472b6; }
@@ -680,6 +748,8 @@
       <button class="control-btn" id="btn-speed">&#9654;&#9654; <span>1X</span></button>
     </div>
     <div class="tool-group">
+      <button class="control-btn" id="btn-zoomout" title="缩小 (Scroll Down / −)">&#8722; <span>Z−</span></button>
+      <button class="control-btn" id="btn-zoomin" title="放大 (Scroll Up / +)">&#43; <span>Z+</span></button>
       <button class="control-btn" id="btn-resetview" title="重置视角 (R / Home)">&#127919; <span>VIEW</span></button>
       <button class="control-btn danger" id="btn-clear">&#215; <span>CLEAR</span></button>
       <button class="control-btn danger" id="btn-clear-zombies">&#9760; <span>PURGE</span></button>
@@ -768,6 +838,30 @@
         <button class="fab-btn danger" id="fab-btn-clear-zombies">
           &#9760; <span>PURGE</span>
         </button>
+      </div>
+    </div>
+
+    <!-- ============ CAMERA 面板: 缩放按钮 + 方向键（手机端无键盘时操作摄像机）============ -->
+    <div class="fab-section">
+      <div class="fab-section-title">CAMERA</div>
+      <!-- 缩放按钮行 -->
+      <div class="fab-btn-row">
+        <button class="fab-btn" id="fab-btn-zoomout" title="缩小 (−)">
+          &#8722; <span>ZOOM OUT</span>
+        </button>
+        <button class="fab-btn" id="fab-btn-zoomin" title="放大 (+)">
+          &#43; <span>ZOOM IN</span>
+        </button>
+      </div>
+      <!-- 方向键: 9 宫格布局（中心空，8向）简化为 4 方向 + 中键重置 -->
+      <div id="fab-cam-dpad">
+        <button class="fab-cam-btn up" id="fab-btn-cam-up" title="向上 (W/↑)">▲</button>
+        <div class="fab-cam-mid-row">
+          <button class="fab-cam-btn left" id="fab-btn-cam-left" title="向左 (A/←)">◀</button>
+          <button class="fab-cam-btn center" id="fab-btn-cam-center" title="回中心">◎</button>
+          <button class="fab-cam-btn right" id="fab-btn-cam-right" title="向右 (D/→)">▶</button>
+        </div>
+        <button class="fab-cam-btn down" id="fab-btn-cam-down" title="向下 (S/↓)">▼</button>
       </div>
     </div>
 

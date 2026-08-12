@@ -21,7 +21,7 @@ const ENTITY_CONFIG = {
     hp: 100, maxHp: 100, speed: 110, damage: 15,
     attackRange: 38, attackCooldown: 800,
     detectRange: 260, fleeRange: 100, aggression: 0.4,
-    jumpPower: 320, weight: 1,
+    jumpPower: 460, weight: 1,
     color: PALETTE.green, accentColor: PALETTE.greenDark, skinColor: PALETTE.skin, size: 14
   },
   survivor_female: {
@@ -29,7 +29,7 @@ const ENTITY_CONFIG = {
     hp: 85, maxHp: 85, speed: 125, damage: 11,
     attackRange: 34, attackCooldown: 700,
     detectRange: 300, fleeRange: 130, aggression: 0.25,
-    jumpPower: 360, weight: 0.9,
+    jumpPower: 500, weight: 0.9,
     color: PALETTE.green, accentColor: PALETTE.greenDarker, skinColor: PALETTE.skin, size: 13
   },
   zombie_normal: {
@@ -37,7 +37,7 @@ const ENTITY_CONFIG = {
     hp: 110, maxHp: 110, speed: 55, damage: 14,
     attackRange: 32, attackCooldown: 1000,
     detectRange: 320,
-    jumpPower: 260, weight: 1.1,
+    jumpPower: 400, weight: 1.1,
     color: PALETTE.red, accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ, size: 14
   },
   zombie_fast: {
@@ -45,7 +45,7 @@ const ENTITY_CONFIG = {
     hp: 60, maxHp: 60, speed: 150, damage: 8,
     attackRange: 28, attackCooldown: 550,
     detectRange: 360,
-    jumpPower: 380, weight: 0.8,
+    jumpPower: 520, weight: 0.8,
     color: PALETTE.red, accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ, size: 12
   },
   zombie_tank: {
@@ -53,7 +53,7 @@ const ENTITY_CONFIG = {
     hp: 360, maxHp: 360, speed: 35, damage: 32,
     attackRange: 40, attackCooldown: 1400,
     detectRange: 280,
-    jumpPower: 180, weight: 1.8,
+    jumpPower: 320, weight: 1.8,
     color: PALETTE.red, accentColor: PALETTE.redDarker, skinColor: PALETTE.skinZ, size: 19
   }
 };
@@ -443,6 +443,19 @@ class GameScene extends Phaser.Scene {
         duration: 360, ease: 'Cubic.Out'
       });
     };
+
+    // ====== 摄像机: 缩放按钮 (toolbar + 悬浮球) ======
+    this._zoomByButton = (factor) => {
+      const cam = this.cameras.main;
+      const MIN_Z = GameScene.MIN_ZOOM, MAX_Z = GameScene.MAX_ZOOM;
+      this.zoomAtScreenPoint(this.scale.width / 2, this.scale.height / 2, factor, MIN_Z, MAX_Z);
+    };
+    this._zoomIn = () => this._zoomByButton(1.25);
+    this._zoomOut = () => this._zoomByButton(1 / 1.25);
+
+    // ====== 摄像机: 虚拟方向键 (D-PAD) 长按状态 ======
+    this._camDPadHeld = { up: false, down: false, left: false, right: false, center: false };
+    this._dpadPanSpeed = 40; // 比键盘 WASD 快一点（触控一次按久一点）
   }
 
   onResize() {
@@ -510,6 +523,18 @@ class GameScene extends Phaser.Scene {
 
     this.buildSky(WORLD_W, WORLD_H);
 
+    // Arcade 物理本地化: 确保 staticGroup 的碰撞 Sprite 具备真实碰撞尺寸
+    // setSize/refreshBody 依赖 sprite.texture.source 的尺寸，所以直接建对应尺寸的 canvas texture
+    const ensureSizeTexture = (key, w, h) => {
+      if (this.textures.exists(key)) return key;
+      const cv = this.textures.createCanvas(key, Math.max(1, Math.floor(w)), Math.max(1, Math.floor(h)));
+      const ctx = cv.getContext();
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+      cv.refresh();
+      return key;
+    };
+    this._ensureSizeTex = ensureSizeTexture;
+
     this.groundHeight = GROUND_H;
     this.groundGroup = this.physics.add.staticGroup();
     this.groundLayer = this.add.container(0, 0);
@@ -519,8 +544,10 @@ class GameScene extends Phaser.Scene {
     // 侧墙（世界边界两侧,比世界略高,防止跳出）
     this.sideWalls = this.physics.add.staticGroup();
     const t = 40;
-    this.sideWalls.create(-t / 2, WORLD_H / 2, null).setSize(t, WORLD_H * 1.4).setVisible(false).refreshBody();
-    this.sideWalls.create(WORLD_W + t / 2, WORLD_H / 2, null).setSize(t, WORLD_H * 1.4).setVisible(false).refreshBody();
+    const wallH = WORLD_H * 1.4;
+    ensureSizeTexture('__sw_wall', t, wallH);
+    this.sideWalls.create(-t / 2, WORLD_H / 2, '__sw_wall').setVisible(false);
+    this.sideWalls.create(WORLD_W + t / 2, WORLD_H / 2, '__sw_wall').setVisible(false);
 
     this.platformGroup = this.physics.add.staticGroup();
     this.platformLayer = this.add.container(0, 0);
@@ -532,9 +559,10 @@ class GameScene extends Phaser.Scene {
     const gh = this.groundHeight;
     this.groundGroup.clear(true, true);
     this.groundLayer.removeAll(true);
-    // 地面碰撞体（贴世界底部）
-    this.groundGroup.create(w / 2, h - gh / 2, null)
-      .setSize(w, gh).setVisible(false).refreshBody();
+    // 关键: texture 尺寸本身就是 (w, gh)，让 Static Body 默认大小就是碰撞大小
+    const tex = this._ensureSizeTex ? this._ensureSizeTex('__gr', w, gh) : null;
+    this.groundGroup.create(w / 2, h - gh / 2, tex || null).setVisible(false);
+
     // 纹理平铺
     const tile = this.textures.get('groundTile').getSourceImage();
     const tw = tile.width, th = tile.height;
@@ -549,12 +577,10 @@ class GameScene extends Phaser.Scene {
     if (this.groundTopLine) this.groundTopLine.destroy();
     const top = this.add.graphics();
     top.setDepth(-1);
-    // 草皮上层
     top.fillStyle(0x14532d, 1);
     top.fillRect(0, h - gh, w, 8);
     top.fillStyle(PALETTE.green, 0.85);
     top.fillRect(0, h - gh, w, 2);
-    // 点缀小草
     top.fillStyle(PALETTE.green, 0.45);
     for (let x = 0; x < w; x += 18) {
       const gx = x + ((x / 18) % 3) * 3;
@@ -588,8 +614,9 @@ class GameScene extends Phaser.Scene {
     defs.forEach((d, idx) => {
       const cx = w * d.cxPct;
       const cy = LAYERS[d.layer] - d.ph / 2; // 平台中心
-      this.platformGroup.create(cx, cy, null)
-        .setSize(d.pw, d.ph).setVisible(false).refreshBody();
+      // texture 尺寸本身 = (pw, ph) — Static Body 大小就是碰撞体大小
+      const texKey = this._ensureSizeTex ? this._ensureSizeTex(`__p_${d.pw}_${d.ph}`, d.pw, d.ph) : null;
+      this.platformGroup.create(cx, cy, texKey || null).setVisible(false);
       // 绘制平台外观: 草皮顶 + 泥土底 + 深色边缘
       const g = this.add.graphics();
       // 阴影
@@ -806,29 +833,6 @@ class GameScene extends Phaser.Scene {
     cam.scrollY = wy - py / newZoom;
   }
 
-  update(_, deltaMs) {
-    // WASD 平移
-    if (this._wasdKeys) {
-      const cam = this.cameras.main;
-      const z = cam.zoom;
-      const pxPerFrame = this._camPanSpeed * (deltaMs / 16.67);
-      // 按屏幕像素平移 → 转成世界像素
-      const worldStep = pxPerFrame / z;
-      let dx = 0, dy = 0;
-      if (this._wasdKeys.left.isDown) dx -= worldStep;
-      if (this._wasdKeys.right.isDown) dx += worldStep;
-      if (this._wasdKeys.up.isDown) dy -= worldStep;
-      if (this._wasdKeys.down.isDown) dy += worldStep;
-      if (dx || dy) {
-        cam.scrollX = Phaser.Math.Clamp(cam.scrollX + dx, 0, GameScene.WORLD_W - this.scale.width / z);
-        cam.scrollY = Phaser.Math.Clamp(cam.scrollY + dy, 0, GameScene.WORLD_H - this.scale.height / z);
-      }
-      if (this._wasdKeys.resetView.isDown && this._resetCameraView) {
-        this._resetCameraView();
-      }
-    }
-  }
-
   // ---- 输入：点击/触摸放置（屏幕坐标→世界坐标,含防抖+防误触）----
   buildInputHandlers() {
     const WORLD_W = GameScene.WORLD_W, WORLD_H = GameScene.WORLD_H;
@@ -1029,11 +1033,11 @@ class GameScene extends Phaser.Scene {
     const ent = {};
     ent.sprite = this.physics.add.sprite(x, y, type);
     ent.sprite.setCollideWorldBounds(true);
-    ent.sprite.setBounce(0.05, 0.1);
+    ent.sprite.setBounce(0.02, 0.08);
     ent.sprite.setDepth(10);
     const r = cfg.size * 0.6;
     ent.sprite.body.setCircle(r, cfg.size * 0.2, cfg.size * 0.5);
-    ent.sprite.body.setGravityY(0);
+    // 使用全局 Arcade gravity (900px/s²), 不再覆盖为0 (之前会导致角色悬浮/永远贴在世界边界底部)
     ent.sprite.body.mass = cfg.weight;
 
     ent.type = type; ent.cfg = cfg;
@@ -1092,24 +1096,40 @@ class GameScene extends Phaser.Scene {
 
   update(time, delta) {
     // ========== 摄像机: WASD / 方向键 / Home,R 重置视角 ==========
+    const cam = this.cameras.main;
+    const z = cam.zoom;
+    const WORLD_W = GameScene.WORLD_W, WORLD_H = GameScene.WORLD_H;
+    let dx = 0, dy = 0;
+
+    // 1) 物理键盘 (WASD/方向键)
     if (this._wasdKeys) {
-      const cam = this.cameras.main;
-      const z = cam.zoom;
       const pxPerFrame = this._camPanSpeed * (delta / 16.67);
       const worldStep = pxPerFrame / z;
-      let dx = 0, dy = 0;
       if (this._wasdKeys.left.isDown) dx -= worldStep;
       if (this._wasdKeys.right.isDown) dx += worldStep;
       if (this._wasdKeys.up.isDown) dy -= worldStep;
       if (this._wasdKeys.down.isDown) dy += worldStep;
-      if (dx || dy) {
-        const WORLD_W = GameScene.WORLD_W, WORLD_H = GameScene.WORLD_H;
-        cam.scrollX = Phaser.Math.Clamp(cam.scrollX + dx, 0, Math.max(0, WORLD_W - this.scale.width / z));
-        cam.scrollY = Phaser.Math.Clamp(cam.scrollY + dy, 0, Math.max(0, WORLD_H - this.scale.height / z));
-      }
-      if (this._wasdKeys.resetView.isDown && this._resetCameraView) {
+      if (this._wasdKeys.resetView.isDown && this._resetCameraView) this._resetCameraView();
+    }
+
+    // 2) 虚拟方向键 D-PAD (手机端长按)
+    if (this._camDPadHeld) {
+      const pxPerFrame = (this._dpadPanSpeed || 40) * (delta / 16.67);
+      const worldStep = pxPerFrame / z;
+      if (this._camDPadHeld.left) dx -= worldStep;
+      if (this._camDPadHeld.right) dx += worldStep;
+      if (this._camDPadHeld.up) dy -= worldStep;
+      if (this._camDPadHeld.down) dy += worldStep;
+      if (this._camDPadHeld.center && this._resetCameraView) {
+        // center 不一直 reset，只触发一次 (由 DOM handler 设 true 后这里立即还原)
         this._resetCameraView();
+        this._camDPadHeld.center = false;
       }
+    }
+
+    if (dx || dy) {
+      cam.scrollX = Phaser.Math.Clamp(cam.scrollX + dx, 0, Math.max(0, WORLD_W - this.scale.width / z));
+      cam.scrollY = Phaser.Math.Clamp(cam.scrollY + dy, 0, Math.max(0, WORLD_H - this.scale.height / z));
     }
 
     if (paused) return;
@@ -1140,9 +1160,15 @@ class GameScene extends Phaser.Scene {
   // ---- 横版角色 AI ----
   updateEntityAI(ent, now, dt, realTime) {
     const cfg = ent.cfg;
+    const GRAVITY = 900; // 与全局 physics.arcade.gravity.y 保持一致
+    // 该角色能跳到的最大高度 (用于判断是否能跳上平台追上目标)
+    const maxJumpH = cfg.jumpPower ? (cfg.jumpPower * cfg.jumpPower) / (2 * GRAVITY) : 90;
+    const entBody = ent.sprite.body;
+
     let nearestEnemy = null;
     let nearestDist = Infinity;
     let nearestDx = 0;
+    let nearestDy = 0;
 
     this.entities.forEach(other => {
       if (other === ent || other.isDead) return;
@@ -1150,7 +1176,7 @@ class GameScene extends Phaser.Scene {
       const dx = other.sprite.x - ent.sprite.x;
       const dy = other.sprite.y - ent.sprite.y;
       const d = Math.hypot(dx, dy);
-      if (d < nearestDist) { nearestDist = d; nearestEnemy = other; nearestDx = dx; }
+      if (d < nearestDist) { nearestDist = d; nearestEnemy = other; nearestDx = dx; nearestDy = dy; }
     });
 
     ent.target = (nearestEnemy && nearestDist <= cfg.detectRange) ? nearestEnemy : null;
@@ -1159,8 +1185,59 @@ class GameScene extends Phaser.Scene {
     let dirX = 0; // -1,0,1
     let tryJump = false;
 
-    const onGround = ent.sprite.body.blocked.down || ent.sprite.body.touching.down;
+    const onGround = entBody.blocked.down || entBody.touching.down;
+    // 站在平台/地上时 blocked.down=true；body.velocity.y 判断空中状态
+    const inAir = !onGround && Math.abs(entBody.velocity.y) > 5;
     ent.jumpCooldown = Math.max(0, ent.jumpCooldown - dt);
+
+    // ---- 自动跳平台检测：向前方检测"悬空就跳" + "下方将坠落就停"
+    if (onGround && ent.jumpCooldown === 0 && !inAir && Math.abs(dirX || ent.wanderDir) > 0) {
+      const ahead = (dirX || ent.wanderDir);
+      if (ahead !== 0) {
+        // 角色前方约 1/3 jump 距离的点, 是否有平台 (无则视为将掉落 → 跳一下跨过去 / 或停)
+        const probeX = ent.sprite.x + ahead * Math.max(28, cfg.size * 1.6);
+        const probeY = ent.sprite.y + cfg.size * 0.8;
+        // 简化: 用 tileBias 已在 Physics, 这里只判断是否在某平台顶部坐标附近 + 同Y层范围
+        // 更稳健: 直接用 physics.world.overlapRect 检测 (静态body)
+        const rect = new Phaser.Geom.Rectangle(probeX - 4, probeY - 2, 8, 10);
+        const onSolid = Phaser.Physics.Arcade.ArcadePhysics.prototype.StaticBody &&
+          this.physics.staticGroupCollideCallback; // unused placeholder, fallback below
+        // 用简单的 Y 阈值代替: 如果 probe 在 groundTop 之下视为在地面
+        const groundTopY = GameScene.WORLD_H - this.groundHeight;
+        const onGroundAhead = probeY >= groundTopY - 4;
+        // 下方不是地面且没有任何静态body: 不跳会掉下去 - 如果落差太大(>80)则原地停
+        if (!onGroundAhead) {
+          // 检查是否有平台在 probe 附近 y
+          const pw = ent.sprite.x + ahead * 45;
+          const maxPlatformY = ent.sprite.y + cfg.size * 0.6;
+          const minPlatformY = maxPlatformY - (maxJumpH * 0.55); // 可以跳上 55% 最大高度
+          let platformAhead = false;
+          this.platformGroup.getChildren().forEach(p => {
+            if (!platformAhead) {
+              const b = p.body;
+              if (!b) return;
+              const left = p.x - b.halfWidth;
+              const right = p.x + b.halfWidth;
+              const top = p.y - b.halfHeight;
+              if (pw >= left - 6 && pw <= right + 6 &&
+                  top <= maxPlatformY + 14 && top >= minPlatformY - 14) {
+                platformAhead = true;
+              }
+            }
+          });
+          // 前方有平台高度在跳得到的范围内 → 跳上去
+          if (platformAhead) tryJump = true;
+          // 没有地面也没有平台,前方是悬崖, 但落差>120 → 掉头防止摔死
+          if (!platformAhead && !onGroundAhead) {
+            const cliffDrop = groundTopY - (probeY + cfg.size);
+            if (cliffDrop > 120) {
+              dirX = 0;
+              ent.wanderDir = -ent.wanderDir; // 掉头
+            }
+          }
+        }
+      }
+    }
 
     if (cfg.category === 'survivor') {
       if (hasTarget) {
@@ -1169,24 +1246,29 @@ class GameScene extends Phaser.Scene {
         const dxSign = Math.sign(nearestDx) || 1;
 
         if (d < cfg.attackRange + 6) {
-          // 攻击
           this.tryAttack(ent, enemy, now, realTime);
           dirX = 0;
         } else if (d < cfg.fleeRange && Math.random() > cfg.aggression) {
-          // 逃跑 (反向)
           dirX = -dxSign;
         } else if (d < cfg.detectRange && Math.random() < cfg.aggression + 0.1) {
-          // 反击靠近
           dirX = dxSign;
         } else {
-          // 保持距离
           const ideal = (cfg.fleeRange + cfg.detectRange) / 2;
           dirX = d < ideal ? -dxSign : dxSign;
         }
-        // 被追上时跳跃逃生
-        if (onGround && ent.jumpCooldown === 0 &&
-            d < cfg.fleeRange * 0.7 && Math.random() < 0.025 * dt) {
-          tryJump = true;
+        // 被追上/目标在上方时跳跃逃生或跳平台追击
+        if (onGround && ent.jumpCooldown === 0) {
+          const targetAboveMe = nearestDy < -30; // 目标在上方(在平台上)
+          const targetBelow = nearestDy > 40;
+          const canReachH = -nearestDy - 6 < maxJumpH;
+          const closeEnough = d < Math.max(260, cfg.detectRange * 0.7);
+          if (
+            (d < cfg.fleeRange * 0.7 && Math.random() < 0.03 * dt) ||
+            (targetAboveMe && canReachH && closeEnough)
+          ) {
+            tryJump = true;
+          }
+          if (targetBelow && closeEnough && dirX !== 0 && Math.random() < 0.02 * dt) tryJump = true;
         }
       } else {
         dirX = ent.wanderDir;
@@ -1196,8 +1278,8 @@ class GameScene extends Phaser.Scene {
           ent.wanderDir = r < 0.35 ? -1 : (r < 0.7 ? 1 : 0);
           ent.wanderTimer = 80 + Math.random() * 240;
         }
-        // 偶尔跳
-        if (onGround && ent.jumpCooldown === 0 && Math.random() < 0.006 * dt) {
+        // 游走时偶尔跳
+        if (onGround && ent.jumpCooldown === 0 && Math.random() < 0.008 * dt) {
           tryJump = true;
         }
       }
@@ -1213,10 +1295,13 @@ class GameScene extends Phaser.Scene {
           dirX = dxSign;
         }
         ent.aggroTimer = 3000;
-        // 追击跨越: 接近敌人但有垂直落差时跳跃
+        // 丧尸积极跳跃: 目标上方有高度差 → 跳追
         if (onGround && ent.jumpCooldown === 0) {
-          const dy = nearestEnemy.sprite.y - ent.sprite.y;
-          if ((dy < -30 || Math.random() < 0.008 * dt) && nearestDist < 200) tryJump = true;
+          const canReachH = -nearestDy - 6 < maxJumpH;
+          const targetAbove = nearestDy < -24;
+          const close = d < Math.max(280, cfg.detectRange * 0.6);
+          if (targetAbove && canReachH && close) tryJump = true;
+          else if (Math.random() < 0.012 * dt && d < 260) tryJump = true;
         }
       } else if (ent.aggroTimer > 0) {
         dirX = ent.wanderDir;
@@ -1243,7 +1328,7 @@ class GameScene extends Phaser.Scene {
     // 跳跃
     if (tryJump && onGround && ent.jumpCooldown === 0) {
       ent.sprite.setVelocityY(-cfg.jumpPower);
-      ent.jumpCooldown = 25;
+      ent.jumpCooldown = Math.max(16, 24 + Math.random() * 8);
     }
 
     // 朝向
@@ -1624,6 +1709,59 @@ function setupToolbar() {
   }
   document.getElementById('btn-resetview')?.addEventListener('click', doResetView);
   document.getElementById('fab-btn-resetview')?.addEventListener('click', doResetView);
+
+  // -------- 摄像机缩放按钮 (两处 + / -) --------
+  function doZoomIn() {
+    const scene = gameInstance?.scene.getScene('GameScene');
+    if (scene && scene._zoomIn) scene._zoomIn();
+  }
+  function doZoomOut() {
+    const scene = gameInstance?.scene.getScene('GameScene');
+    if (scene && scene._zoomOut) scene._zoomOut();
+  }
+  document.getElementById('btn-zoomin')?.addEventListener('click', doZoomIn);
+  document.getElementById('btn-zoomout')?.addEventListener('click', doZoomOut);
+  document.getElementById('fab-btn-zoomin')?.addEventListener('click', doZoomIn);
+  document.getElementById('fab-btn-zoomout')?.addEventListener('click', doZoomOut);
+
+  // -------- 虚拟方向键 D-PAD (长按持续平移摄像机) --------
+  const dpadDirs = ['up', 'down', 'left', 'right', 'center'];
+  function setDPadHeld(dir, held) {
+    const scene = gameInstance?.scene.getScene('GameScene');
+    if (!scene || !scene._camDPadHeld) return;
+    scene._camDPadHeld[dir] = !!held;
+    // 视觉高亮
+    const btn = document.getElementById('fab-btn-cam-' + dir);
+    if (btn) btn.classList.toggle('is-held', !!held);
+  }
+  function bindDPadButton(dir) {
+    const btnId = 'fab-btn-cam-' + dir;
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    // pointerdown 按下 (含鼠标/触摸/笔)
+    btn.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      btn.setPointerCapture?.(ev.pointerId);
+      if (dir === 'center') {
+        // 中键立即重置视角, 同时也 set held 防止抖动
+        doResetView();
+        setDPadHeld('center', true);
+        setTimeout(() => setDPadHeld('center', false), 220);
+      } else {
+        setDPadHeld(dir, true);
+      }
+    });
+    // pointerup / pointercancel / leave 都取消
+    const cancel = (ev) => {
+      if (dir !== 'center') setDPadHeld(dir, false);
+    };
+    btn.addEventListener('pointerup', cancel);
+    btn.addEventListener('pointercancel', cancel);
+    btn.addEventListener('pointerleave', cancel);
+    // 防止 iOS Safari 长按弹出系统菜单
+    btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  dpadDirs.forEach(bindDPadButton);
 
   // -------- 横屏按钮 (两处都绑定到同一个 toggleLandscapeMode) --------
   const landscapeHandler = (ev) => toggleLandscapeMode(ev.currentTarget);

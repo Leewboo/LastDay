@@ -384,13 +384,38 @@ class BootScene extends Phaser.Scene {
 class GameScene extends Phaser.Scene {
   constructor() { super('GameScene'); }
 
+  // ===== 世界尺寸常量 (和 viewport 无关, 固定宽幅横版 5:2) =====
+  static get WORLD_W() { return 3200; }
+  static get WORLD_H() { return 1280; }
+  static get GROUND_H() { return 240; } // 世界底部地面高度（视觉更厚,不再贴地）
+  static get MIN_ZOOM() { return 0.35; }
+  static get MAX_ZOOM() { return 2.0; }
+
   create() {
     this.entities = [];
     this.corpses = [];
     this.fightEffects = [];
     this.stats = { survivors: 0, zombies: 0, dead: 0, fights: 0 };
 
+    const WORLD_W = GameScene.WORLD_W;
+    const WORLD_H = GameScene.WORLD_H;
+
+    // 物理世界边界 (侧墙/地面/顶部基于这个)
+    this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H, true, true, true, true);
+
+    // 摄像机边界
+    this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
+    this.cameras.main.setBackgroundColor(PALETTE.sky);
+
+    // 摄像机初始缩放: 把世界宽度装进 viewport, 至少看到 1/3 世界高度
+    const vw = this.scale.width, vh = this.scale.height;
+    const baseZoom = Math.min(vw / WORLD_W, vh / (WORLD_H * 0.68));
+    this.cameras.main.setZoom(baseZoom);
+    this.cameras.main.centerOn(WORLD_W * 0.5, WORLD_H * 0.56); // 初始稍微朝下看(地面在下方 40%)
+    this._baseZoom = baseZoom;
+
     this.buildMap();
+    this.setupCameraControls();
     this.buildInputHandlers();
 
     this.time.addEvent({
@@ -399,82 +424,143 @@ class GameScene extends Phaser.Scene {
     });
 
     this.scale.on('resize', this.onResize, this);
+
+    // 暴露方法给外部 (比如 toolbar 重置视角按钮)
+    this._resetCameraView = () => {
+      const w = this.scale.width, h = this.scale.height;
+      const z = Math.min(w / WORLD_W, h / (WORLD_H * 0.68));
+      this.cameras.main.setZoom(z);
+      this.cameras.main.centerOn(WORLD_W * 0.5, WORLD_H * 0.56);
+    };
+    this._focusOn = (x, y) => {
+      const cam = this.cameras.main;
+      const targetX = Phaser.Math.Clamp(x, 0, WORLD_W);
+      const targetY = Phaser.Math.Clamp(y, 0, WORLD_H);
+      this.tweens.add({
+        targets: cam,
+        scrollX: targetX - (this.scale.width / 2) / cam.zoom,
+        scrollY: targetY - (this.scale.height / 2) / cam.zoom,
+        duration: 360, ease: 'Cubic.Out'
+      });
+    };
   }
 
   onResize() {
     if (!this.groundLayer) return;
-    const { width, height } = this.scale;
-    // 重建地面（贴底）
-    this.rebuildGround(width, height);
-    // 重建天空平铺
+    const WORLD_W = GameScene.WORLD_W, WORLD_H = GameScene.WORLD_H;
+    // 重建天空平铺（按世界大小）
     if (this.skyTiles) this.skyTiles.forEach(t => t.destroy());
-    this.buildSky(width, height);
+    this.buildSky(WORLD_W, WORLD_H);
+    // 让相机始终在世界边界内
+    const cam = this.cameras.main;
+    if (cam) {
+      cam.setBounds(0, 0, WORLD_W, WORLD_H);
+    }
   }
 
   buildSky(w, h) {
     this.skyTiles = [];
     const tile = this.textures.get('skyBg').getSourceImage();
     const tw = tile.width, th = tile.height;
+    // 横向平铺 2 层: 天空 80% + 地平线远山 20%
+    const skyH = h * 0.78;
     for (let x = 0; x < w + tw; x += tw) {
       const img = this.add.image(x, 0, 'skyBg').setOrigin(0, 0);
-      const sy = h / th * 0.8;
-      img.setScale(tw / tw, Math.max(1, sy));
-      img.setDisplaySize(tw, Math.max(th, h * 0.8));
+      img.setDisplaySize(tw, skyH);
       img.setDepth(-5);
       this.skyTiles.push(img);
     }
+    // 远山层 - 程序化画一条绿色山脉剪影
+    if (this.mountainLayer) this.mountainLayer.destroy();
+    const mtn = this.add.graphics();
+    mtn.setDepth(-4);
+    mtn.fillStyle(0x12221a, 0.85);
+    mtn.beginPath();
+    mtn.moveTo(0, skyH);
+    let lastY = skyH - h * 0.03;
+    mtn.lineTo(0, lastY);
+    for (let x = 0; x <= w; x += 60) {
+      const peakH = 0.04 + 0.06 * Math.abs(Math.sin(x * 0.0018 + 1.2));
+      lastY = skyH - h * peakH - 18 * Math.sin(x * 0.02);
+      mtn.lineTo(x, lastY);
+    }
+    mtn.lineTo(w, skyH);
+    mtn.closePath();
+    mtn.fillPath();
+    // 第二层近山
+    mtn.fillStyle(0x0a1a12, 0.9);
+    mtn.beginPath();
+    mtn.moveTo(0, skyH + 16);
+    for (let x = 0; x <= w; x += 40) {
+      const peakH = 0.02 + 0.045 * Math.abs(Math.sin(x * 0.004 + 3.1));
+      const y = skyH + 16 - h * peakH - 12 * Math.cos(x * 0.03);
+      mtn.lineTo(x, y);
+    }
+    mtn.lineTo(w, skyH + 16);
+    mtn.closePath();
+    mtn.fillPath();
+    this.mountainLayer = mtn;
+    this._skyH = skyH;
   }
 
   buildMap() {
-    const { width, height } = this.scale;
+    const WORLD_W = GameScene.WORLD_W;
+    const WORLD_H = GameScene.WORLD_H;
+    const GROUND_H = GameScene.GROUND_H;
 
-    this.buildSky(width, height);
+    this.buildSky(WORLD_W, WORLD_H);
 
-    // 地面层（贴屏幕底部）
-    this.groundHeight = Math.max(60, Math.floor(height * 0.18));
+    this.groundHeight = GROUND_H;
     this.groundGroup = this.physics.add.staticGroup();
     this.groundLayer = this.add.container(0, 0);
     this.groundLayer.setDepth(-2);
-    this.rebuildGround(width, height);
+    this.rebuildGround(WORLD_W, WORLD_H);
 
-    // 墙体（左右边界，防止走出屏幕）
+    // 侧墙（世界边界两侧,比世界略高,防止跳出）
     this.sideWalls = this.physics.add.staticGroup();
-    const t = 30;
-    const wl = this.sideWalls.create(-t / 2, height / 2, null).setSize(t, height * 2).setVisible(false).refreshBody();
-    const wr = this.sideWalls.create(width + t / 2, height / 2, null).setSize(t, height * 2).setVisible(false).refreshBody();
+    const t = 40;
+    this.sideWalls.create(-t / 2, WORLD_H / 2, null).setSize(t, WORLD_H * 1.4).setVisible(false).refreshBody();
+    this.sideWalls.create(WORLD_W + t / 2, WORLD_H / 2, null).setSize(t, WORLD_H * 1.4).setVisible(false).refreshBody();
 
-    // 空中平台 (横向 2-3 块浮岛)
     this.platformGroup = this.physics.add.staticGroup();
     this.platformLayer = this.add.container(0, 0);
     this.platformLayer.setDepth(-1);
-    this.rebuildPlatforms(width, height);
+    this.rebuildPlatforms(WORLD_W, WORLD_H);
   }
 
   rebuildGround(w, h) {
     const gh = this.groundHeight;
-    // 清理旧地面
     this.groundGroup.clear(true, true);
     this.groundLayer.removeAll(true);
-    // 碰撞体
-    const body = this.groundGroup.create(w / 2, h - gh / 2, null)
+    // 地面碰撞体（贴世界底部）
+    this.groundGroup.create(w / 2, h - gh / 2, null)
       .setSize(w, gh).setVisible(false).refreshBody();
     // 纹理平铺
     const tile = this.textures.get('groundTile').getSourceImage();
     const tw = tile.width, th = tile.height;
     const scale = gh / th;
-    for (let x = 0; x < w + tw; x += Math.floor(tw * scale)) {
+    const step = Math.floor(tw * scale);
+    for (let x = 0; x < w + tw; x += step) {
       const img = this.add.image(x, h - gh, 'groundTile').setOrigin(0, 0);
       img.setScale(scale);
       this.groundLayer.add(img);
     }
-    // 地面上沿细绿线
+    // 地面上沿粗绿线（草皮）
+    if (this.groundTopLine) this.groundTopLine.destroy();
     const top = this.add.graphics();
-    top.lineStyle(1, PALETTE.green, 0.5);
-    top.beginPath();
-    top.moveTo(0, h - gh);
-    top.lineTo(w, h - gh);
-    top.strokePath();
     top.setDepth(-1);
+    // 草皮上层
+    top.fillStyle(0x14532d, 1);
+    top.fillRect(0, h - gh, w, 8);
+    top.fillStyle(PALETTE.green, 0.85);
+    top.fillRect(0, h - gh, w, 2);
+    // 点缀小草
+    top.fillStyle(PALETTE.green, 0.45);
+    for (let x = 0; x < w; x += 18) {
+      const gx = x + ((x / 18) % 3) * 3;
+      top.fillRect(gx, h - gh - 4, 1, 4);
+      top.fillRect(gx + 2, h - gh - 3, 1, 3);
+    }
     this.groundTopLine = top;
   }
 
@@ -482,60 +568,293 @@ class GameScene extends Phaser.Scene {
     this.platformGroup.clear(true, true);
     this.platformLayer.removeAll(true);
     const gh = this.groundHeight;
-    // 三个平台 (左低, 中高, 右低)
+    const groundTopY = h - gh; // 地面顶部的世界坐标Y
+    // 8 个平台: 5 层高度, 左右错落分布
+    // 高度层: groundTopY - 90, -180, -280, -400, -540
+    const LAYERS = [90, 180, 280, 400, 540].map(d => groundTopY - d);
+    // 每个平台: cx(比例), cy层, 宽, 厚
     const defs = [
-      { cx: w * 0.22, cy: h - gh - 110, pw: Math.min(160, w * 0.2), ph: 16 },
-      { cx: w * 0.52, cy: h - gh - 180, pw: Math.min(200, w * 0.26), ph: 16 },
-      { cx: w * 0.80, cy: h - gh - 120, pw: Math.min(150, w * 0.2), ph: 16 }
+      { cxPct: 0.09,  layer: 0, pw: 260, ph: 22 }, // 地面+90 最左
+      { cxPct: 0.26,  layer: 1, pw: 300, ph: 22 }, // 地面+180 左上
+      { cxPct: 0.42,  layer: 3, pw: 220, ph: 22 }, // 地面+400 中高
+      { cxPct: 0.50,  layer: 2, pw: 380, ph: 22 }, // 地面+280 中间长桥
+      { cxPct: 0.58,  layer: 4, pw: 180, ph: 22 }, // 地面+540 最高
+      { cxPct: 0.74,  layer: 1, pw: 300, ph: 22 }, // 地面+180 右上
+      { cxPct: 0.88,  layer: 2, pw: 260, ph: 22 }, // 地面+280 右中
+      { cxPct: 0.95,  layer: 0, pw: 220, ph: 22 }, // 地面+90 最右
     ];
     const tile = this.textures.get('groundTile').getSourceImage();
     const th = tile.height;
-    defs.forEach(d => {
-      this.platformGroup.create(d.cx, d.cy, null)
+    defs.forEach((d, idx) => {
+      const cx = w * d.cxPct;
+      const cy = LAYERS[d.layer] - d.ph / 2; // 平台中心
+      this.platformGroup.create(cx, cy, null)
         .setSize(d.pw, d.ph).setVisible(false).refreshBody();
-      // 顶部草皮带
+      // 绘制平台外观: 草皮顶 + 泥土底 + 深色边缘
       const g = this.add.graphics();
-      g.fillStyle(PALETTE.greenDark, 1);
-      g.fillRect(d.cx - d.pw / 2, d.cy - d.ph / 2, d.pw, 4);
-      g.fillStyle(PALETTE.green, 1);
-      g.fillRect(d.cx - d.pw / 2, d.cy - d.ph / 2, d.pw, 1);
+      // 阴影
+      g.fillStyle(0x000000, 0.35);
+      g.fillRect(cx - d.pw / 2 + 4, cy - d.ph / 2 + 6, d.pw, d.ph);
+      // 泥土
       g.fillStyle(PALETTE.ground, 1);
-      g.fillRect(d.cx - d.pw / 2, d.cy - d.ph / 2 + 4, d.pw, d.ph - 4);
-      g.lineStyle(1, PALETTE.line2, 1);
-      g.strokeRect(d.cx - d.pw / 2, d.cy - d.ph / 2, d.pw, d.ph);
+      g.fillRect(cx - d.pw / 2, cy - d.ph / 2, d.pw, d.ph);
+      // 草皮带
+      g.fillStyle(0x14532d, 1);
+      g.fillRect(cx - d.pw / 2, cy - d.ph / 2, d.pw, 6);
+      g.fillStyle(PALETTE.green, 1);
+      g.fillRect(cx - d.pw / 2, cy - d.ph / 2, d.pw, 2);
+      // 边缘轮廓
+      g.lineStyle(1.2, PALETTE.line2, 0.9);
+      g.strokeRect(cx - d.pw / 2, cy - d.ph / 2, d.pw, d.ph);
+      // 支柱 (左右两个小木柱向下)
+      const pillarH = Math.min(40 + (LAYERS[d.layer] - groundTopY + d.layer * 16), 90);
+      if (pillarH > 20) {
+        g.fillStyle(0x0f0f0f, 1);
+        g.fillRect(cx - d.pw / 2 + 10, cy + d.ph / 2, 6, pillarH);
+        g.fillRect(cx + d.pw / 2 - 16, cy + d.ph / 2, 6, pillarH);
+        g.lineStyle(1, PALETTE.line2, 0.6);
+        g.strokeRect(cx - d.pw / 2 + 10, cy + d.ph / 2, 6, pillarH);
+        g.strokeRect(cx + d.pw / 2 - 16, cy + d.ph / 2, 6, pillarH);
+      }
       this.platformLayer.add(g);
     });
+    // 装饰: 天空中几朵云 (不参与物理)
+    if (this.cloudLayer) this.cloudLayer.destroy();
+    const clouds = this.add.graphics();
+    clouds.setDepth(-3);
+    clouds.fillStyle(0x1f3a2d, 0.45);
+    const cloudsDefs = [
+      { x: w * 0.10, y: h * 0.14, w: 170, h: 48 },
+      { x: w * 0.32, y: h * 0.08, w: 210, h: 60 },
+      { x: w * 0.58, y: h * 0.20, w: 140, h: 42 },
+      { x: w * 0.78, y: h * 0.11, w: 250, h: 70 },
+      { x: w * 0.92, y: h * 0.24, w: 160, h: 46 },
+    ];
+    cloudsDefs.forEach(c => {
+      // 3 段椭圆拼成云
+      clouds.fillCircle(c.x,           c.y + c.h * 0.5, c.h * 0.6);
+      clouds.fillCircle(c.x + c.w*0.30, c.y,             c.h * 0.85);
+      clouds.fillCircle(c.x + c.w*0.55, c.y + c.h * 0.25,c.h * 0.9);
+      clouds.fillCircle(c.x + c.w*0.80, c.y + c.h * 0.55,c.h * 0.65);
+      clouds.fillCircle(c.x + c.w,      c.y + c.h * 0.4, c.h * 0.55);
+    });
+    this.cloudLayer = clouds;
   }
 
-  // ---- 输入：点击/触摸放置（含防抖+防误触）----
+  // ---------- 摄像机控制: 拖动平移 / 滚轮缩放 / 双指捏合 / WASD 平移 ----------
+  setupCameraControls() {
+    const cam = this.cameras.main;
+    const WORLD_W = GameScene.WORLD_W, WORLD_H = GameScene.WORLD_H;
+    const MIN_Z = GameScene.MIN_ZOOM, MAX_Z = GameScene.MAX_ZOOM;
+
+    // --- 桌面: 按住右键拖动 或 按住左键(未选中工具时) 拖动 ---
+    let isDragging = false;
+    let dragStartCam = null;
+    let dragStartPointer = null;
+    const isPointerInUI = (p) => {
+      // 点击坐标是世界坐标还是屏幕坐标? Phaser pointer.y 是DOM屏幕坐标
+      // 用浏览器原生 elementFromPoint 判断是否落在 html UI 上 (toolbar/fab/status-bar)
+      if (typeof document === 'undefined') return false;
+      const el = document.elementFromPoint(p.x + document.getElementById('game-container').getBoundingClientRect().left,
+                                           p.y + document.getElementById('game-container').getBoundingClientRect().top);
+      if (!el) return false;
+      let cur = el;
+      while (cur) {
+        if (cur.id === 'toolbar' || cur.id === 'fab' || cur.id === 'fab-panel' || cur.id === 'status-bar' || cur.id === 'orient-mask') return true;
+        cur = cur.parentElement;
+      }
+      return false;
+    };
+
+    this.input.on('pointerdown', (pointer) => {
+      const canDrag =
+        pointer.rightButtonDown() ||
+        pointer.middleButtonDown() ||
+        (!selectedTool && pointer.leftButtonDown());
+      if (!canDrag) { isDragging = false; return; }
+      if (isPointerInUI(pointer)) { isDragging = false; return; }
+      isDragging = true;
+      dragStartCam = { x: cam.scrollX, y: cam.scrollY };
+      dragStartPointer = { x: pointer.x, y: pointer.y, id: pointer.id };
+    });
+
+    this.input.on('pointermove', (pointer) => {
+      if (!isDragging || !dragStartCam || !dragStartPointer) return;
+      if (dragStartPointer.id !== pointer.id) return;
+      const z = cam.zoom;
+      cam.scrollX = dragStartCam.x - (pointer.x - dragStartPointer.x) / z;
+      cam.scrollY = dragStartCam.y - (pointer.y - dragStartPointer.y) / z;
+    });
+
+    this.input.on('pointerup', (pointer) => {
+      if (dragStartPointer && dragStartPointer.id === pointer.id) {
+        isDragging = false;
+        dragStartCam = null;
+        dragStartPointer = null;
+      }
+    });
+    this.input.on('pointerupoutside', () => { isDragging = false; dragStartCam=null; dragStartPointer=null; });
+
+    // --- 桌面: 鼠标滚轮缩放(以鼠标指针下为中心) ---
+    const gameCanvas = this.game.canvas;
+    this._wheelHandler = (e) => {
+      e.preventDefault();
+      const rect = gameCanvas.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const delta = e.deltaY;
+      const factor = delta < 0 ? 1.12 : 0.9;
+      this.zoomAtScreenPoint(px, py, factor, MIN_Z, MAX_Z);
+    };
+    if (gameCanvas) gameCanvas.addEventListener('wheel', this._wheelHandler, { passive: false });
+
+    // --- 移动端: 双指捏合缩放 ---
+    this.input.addPointer(2); // 保证 activePointers=3 足够
+    let pinchStartDist = 0;
+    let pinchStartZoom = 1;
+    let pinchStartCX = 0, pinchStartCY = 0;
+    this.input.on('pointerdown', () => {
+      const p0 = this.input.pointers[0];
+      const p1 = this.input.pointers[1];
+      if (p0 && p1 && p0.active && p1.active) {
+        pinchStartDist = Phaser.Math.Distance.Between(p0.x, p0.y, p1.x, p1.y);
+        pinchStartZoom = cam.zoom;
+        pinchStartCX = (p0.x + p1.x) / 2;
+        pinchStartCY = (p0.y + p1.y) / 2;
+      }
+    });
+    this.input.on('pointermove', () => {
+      const p0 = this.input.pointers[0];
+      const p1 = this.input.pointers[1];
+      if (!pinchStartDist || !p0 || !p1 || !p0.active || !p1.active) return;
+      const d = Phaser.Math.Distance.Between(p0.x, p0.y, p1.x, p1.y);
+      if (d < 5) return;
+      const ratio = d / pinchStartDist;
+      let newZoom = Phaser.Math.Clamp(pinchStartZoom * ratio, MIN_Z, MAX_Z);
+      const factor = newZoom / cam.zoom;
+      if (Math.abs(factor - 1) < 0.005) return;
+      this.zoomAtScreenPoint(pinchStartCX, pinchStartCY, factor, MIN_Z, MAX_Z);
+    });
+    const endPinch = () => { pinchStartDist = 0; };
+    this.input.on('pointerup', endPinch);
+    this.input.on('pointerupoutside', endPinch);
+
+    // --- WASD 键盘平移 ---
+    this._wasdKeys = this.input.keyboard?.addKeys({
+      up: 'W,up', left: 'A,left', down: 'S,down', right: 'D,right',
+      resetView: 'Home,R'
+    }) || null;
+    this._camPanSpeed = 24; // px per frame (in screen pixels at zoom=1)
+  }
+
+  // 以屏幕 (px,py) 为锚点缩放
+  zoomAtScreenPoint(px, py, factor, minZ, maxZ) {
+    const cam = this.cameras.main;
+    const beforeZoom = cam.zoom;
+    const newZoom = Phaser.Math.Clamp(beforeZoom * factor, minZ, maxZ);
+    if (Math.abs(newZoom - beforeZoom) < 0.001) return;
+    // 把屏幕点转成世界点
+    const wx = cam.scrollX + px / beforeZoom;
+    const wy = cam.scrollY + py / beforeZoom;
+    cam.setZoom(newZoom);
+    // 保持屏幕点下的世界点不变
+    cam.scrollX = wx - px / newZoom;
+    cam.scrollY = wy - py / newZoom;
+  }
+
+  update(_, deltaMs) {
+    // WASD 平移
+    if (this._wasdKeys) {
+      const cam = this.cameras.main;
+      const z = cam.zoom;
+      const pxPerFrame = this._camPanSpeed * (deltaMs / 16.67);
+      // 按屏幕像素平移 → 转成世界像素
+      const worldStep = pxPerFrame / z;
+      let dx = 0, dy = 0;
+      if (this._wasdKeys.left.isDown) dx -= worldStep;
+      if (this._wasdKeys.right.isDown) dx += worldStep;
+      if (this._wasdKeys.up.isDown) dy -= worldStep;
+      if (this._wasdKeys.down.isDown) dy += worldStep;
+      if (dx || dy) {
+        cam.scrollX = Phaser.Math.Clamp(cam.scrollX + dx, 0, GameScene.WORLD_W - this.scale.width / z);
+        cam.scrollY = Phaser.Math.Clamp(cam.scrollY + dy, 0, GameScene.WORLD_H - this.scale.height / z);
+      }
+      if (this._wasdKeys.resetView.isDown && this._resetCameraView) {
+        this._resetCameraView();
+      }
+    }
+  }
+
+  // ---- 输入：点击/触摸放置（屏幕坐标→世界坐标,含防抖+防误触）----
   buildInputHandlers() {
-    // 工具栏高度 (用于忽略点击)
+    const WORLD_W = GameScene.WORLD_W, WORLD_H = GameScene.WORLD_H;
     const getTopOffset = () => document.getElementById('toolbar')?.offsetHeight || 60;
+    const isFabPanelOpen = () => document.getElementById('fab-panel')?.classList.contains('open');
+    const isPointerInHtmlUI = (p) => {
+      if (typeof document === 'undefined') return false;
+      const container = document.getElementById('game-container');
+      if (!container) return false;
+      const rect = container.getBoundingClientRect();
+      const el = document.elementFromPoint(p.x + rect.left, p.y + rect.top);
+      if (!el) return false;
+      let cur = el;
+      while (cur) {
+        if (cur.id === 'toolbar' || cur.id === 'fab' || cur.id === 'fab-panel' ||
+            cur.id === 'status-bar' || cur.id === 'orient-mask' ||
+            cur.id === 'asset-hint' || cur.id === 'loader' || cur.id === 'tooltip') return true;
+        cur = cur.parentElement;
+      }
+      return false;
+    };
     let lastPlaceTs = 0;
     let touchStartPos = null;
-    const PLACE_MIN_INTERVAL = 120; // ms, 防止双触连放
-    const MOVE_TOLERANCE = 12; // px, 超过这个算拖动，不放置
+    let startedDragCam = false; // 此次 pointerdown 是否触发了摄像机拖拽
+    const PLACE_MIN_INTERVAL = 120;
+    const MOVE_TOLERANCE = 12;
 
     const onPlace = (pointer) => {
-      // 防止工具栏区域触发
-      if (pointer.y <= getTopOffset()) return;
       if (!selectedTool) return;
+      if (isPointerInHtmlUI(pointer)) return;
+      // 横屏顶栏隐藏后, 顶部没有 toolbar; 非隐藏模式下过滤 toolbar 点击
+      const topBarHidden = document.body.classList.contains('hide-toolbar');
+      if (!topBarHidden && pointer.y <= getTopOffset()) return;
       const now = Date.now();
       if (now - lastPlaceTs < PLACE_MIN_INTERVAL) return;
       lastPlaceTs = now;
-      // 放置位置限制 (不能埋在地里)
-      const { height } = this.scale;
-      const gh = this.groundHeight;
-      let y = Math.min(pointer.y, height - gh - 20);
-      let x = Phaser.Math.Clamp(pointer.x, 30, this.scale.width - 30);
+      // 屏幕坐标 -> 世界坐标
+      const cam = this.cameras.main;
+      const worldPt = cam.getWorldPoint(pointer.x, pointer.y);
+      const groundTopY = WORLD_H - this.groundHeight;
+      // 限制: 不能埋在地里, 不能出世界边界
+      const cfg = ENTITY_CONFIG[selectedTool];
+      const marginX = cfg.size * 1.2;
+      const placeMinY = cfg.size * 2;
+      const placeMaxY = groundTopY - cfg.size * 0.6;
+      let x = Phaser.Math.Clamp(worldPt.x, marginX, WORLD_W - marginX);
+      let y = Phaser.Math.Clamp(worldPt.y, placeMinY, placeMaxY);
       this.spawnEntity(selectedTool, x, y);
+      // 摄像机聚焦到放置位置（tween动画）
+      if (this._focusOn) this._focusOn(x, y - 40);
     };
 
-    // 区分拖动和点击
+    // 区分：摄像机拖动（右键 / 中键 / 无工具左键）和放置点击
     this.input.on('pointerdown', (pointer) => {
-      touchStartPos = { x: pointer.x, y: pointer.y, id: pointer.id, ts: Date.now() };
+      startedDragCam = false;
+      touchStartPos = null;
+      if (isPointerInHtmlUI(pointer)) return;
+      const leftNoTool = !selectedTool && pointer.leftButtonDown();
+      const wantDrag = pointer.rightButtonDown() || pointer.middleButtonDown() || leftNoTool;
+      if (wantDrag) {
+        startedDragCam = true; // 摄像机 setupCameraControls 会处理
+        return;
+      }
+      // 只有"选中工具+左键点击"才认为是放置尝试
+      if (selectedTool && pointer.leftButtonDown()) {
+        touchStartPos = { x: pointer.x, y: pointer.y, id: pointer.id, ts: Date.now() };
+      }
     });
     this.input.on('pointerup', (pointer) => {
+      if (startedDragCam) { startedDragCam = false; return; }
       if (!touchStartPos || touchStartPos.id !== pointer.id) { touchStartPos = null; return; }
       const dx = Math.abs(pointer.x - touchStartPos.x);
       const dy = Math.abs(pointer.y - touchStartPos.y);
@@ -544,29 +863,28 @@ class GameScene extends Phaser.Scene {
         onPlace(pointer);
       }
     });
-    // 指针移出再回来也取消放置
-    this.input.on('pointerupoutside', () => { touchStartPos = null; });
+    this.input.on('pointerupoutside', () => { touchStartPos = null; startedDragCam = false; });
 
-    // 预览
+    // 预览: 把屏幕坐标->世界坐标,跟随鼠标/手指
     this.input.on('pointermove', (pointer) => {
+      const cam = this.cameras.main;
       if (!this.placementPreview) {
-        this.placementPreview = this.add.image(pointer.x, pointer.y, selectedTool || 'survivor_male');
-        this.placementPreview.setAlpha(0.5).setDepth(999);
-        this.placementPreviewLine = this.add.arc(pointer.x, pointer.y, 0);
-        this.placementPreviewLine.setStrokeStyle(1, PALETTE.text, 0.15);
-        this.placementPreviewLine.setDepth(998);
+        this.placementPreview = this.add.image(0, 0, 'survivor_male').setAlpha(0.5).setDepth(999);
+        this.placementPreviewLine = this.add.arc(0, 0, 0).setStrokeStyle(1, PALETTE.text, 0.15).setDepth(998);
       }
-      const gh = this.groundHeight;
-      const prevY = Math.min(pointer.y, this.scale.height - gh - 20);
-      if (selectedTool) {
-        this.placementPreview.setVisible(true);
-        this.placementPreview.setPosition(pointer.x, prevY);
-        this.placementPreview.setTexture(selectedTool);
+      if (selectedTool && !isPointerInHtmlUI(pointer)) {
+        const worldPt = cam.getWorldPoint(pointer.x, pointer.y);
+        const groundTopY = WORLD_H - this.groundHeight;
         const cfg = ENTITY_CONFIG[selectedTool];
+        const prevY = Phaser.Math.Clamp(worldPt.y, cfg.size * 2, groundTopY - cfg.size * 0.6);
+        const prevX = Phaser.Math.Clamp(worldPt.x, cfg.size, WORLD_W - cfg.size);
+        this.placementPreview.setVisible(true);
+        this.placementPreview.setPosition(prevX, prevY);
+        this.placementPreview.setTexture(selectedTool);
         this.placementPreviewLine.setVisible(true);
-        this.placementPreviewLine.setPosition(pointer.x, prevY);
+        this.placementPreviewLine.setPosition(prevX, prevY);
         this.placementPreviewLine.setRadius(cfg.detectRange);
-        this.placementPreviewLine.setStrokeStyle(1, cfg.color, 0.5);
+        this.placementPreviewLine.setStrokeStyle(1, cfg.color, 0.55);
       } else {
         this.placementPreview.setVisible(false);
         this.placementPreviewLine.setVisible(false);
@@ -641,7 +959,30 @@ class GameScene extends Phaser.Scene {
   }
 
   update(time, delta) {
+    // ========== 摄像机: WASD / 方向键 / Home,R 重置视角 ==========
+    if (this._wasdKeys) {
+      const cam = this.cameras.main;
+      const z = cam.zoom;
+      const pxPerFrame = this._camPanSpeed * (delta / 16.67);
+      const worldStep = pxPerFrame / z;
+      let dx = 0, dy = 0;
+      if (this._wasdKeys.left.isDown) dx -= worldStep;
+      if (this._wasdKeys.right.isDown) dx += worldStep;
+      if (this._wasdKeys.up.isDown) dy -= worldStep;
+      if (this._wasdKeys.down.isDown) dy += worldStep;
+      if (dx || dy) {
+        const WORLD_W = GameScene.WORLD_W, WORLD_H = GameScene.WORLD_H;
+        cam.scrollX = Phaser.Math.Clamp(cam.scrollX + dx, 0, Math.max(0, WORLD_W - this.scale.width / z));
+        cam.scrollY = Phaser.Math.Clamp(cam.scrollY + dy, 0, Math.max(0, WORLD_H - this.scale.height / z));
+      }
+      if (this._wasdKeys.resetView.isDown && this._resetCameraView) {
+        this._resetCameraView();
+      }
+    }
+
     if (paused) return;
+
+    // ========== 战斗/AI / 特效 ==========
     const dt = (delta / 16.666) * gameSpeed;
     const now = time * gameSpeed + (this._timeOffset || 0);
     this._timeOffset = (this._timeOffset || 0) + delta * (gameSpeed - 1);
@@ -1143,6 +1484,14 @@ function setupToolbar() {
   }
   document.getElementById('btn-clear-zombies')?.addEventListener('click', doPurge);
   document.getElementById('fab-btn-clear-zombies')?.addEventListener('click', doPurge);
+
+  // -------- 重置视角按钮 (两处都绑定) --------
+  function doResetView() {
+    const scene = gameInstance?.scene.getScene('GameScene');
+    if (scene && scene._resetCameraView) scene._resetCameraView();
+  }
+  document.getElementById('btn-resetview')?.addEventListener('click', doResetView);
+  document.getElementById('fab-btn-resetview')?.addEventListener('click', doResetView);
 
   // -------- 横屏按钮 (两处都绑定到同一个 toggleLandscapeMode) --------
   const landscapeHandler = (ev) => toggleLandscapeMode(ev.currentTarget);

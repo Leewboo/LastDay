@@ -2,11 +2,64 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="screen-orientation" content="landscape" />
+  <meta name="x5-orientation" content="landscape" />
+  <meta name="x5-fullscreen" content="true" />
+  <meta name="x5-page-mode" content="app" />
+  <meta name="browsermode" content="application" />
+  <meta name="format-detection" content="telephone=no" />
   <title>ZOMBIE SANDBOX</title>
-  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+  <script>
+    // ====== Phaser 多源加载器: 本地 -> jsdelivr -> unpkg -> cdnjs ======
+    (function () {
+      var sources = [
+        '/vendor/phaser.min.js',
+        'https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js',
+        'https://unpkg.com/phaser@3.80.1/dist/phaser.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js'
+      ];
+      var idx = 0;
+      var startTs = Date.now();
+      function tryLoad() {
+        if (idx >= sources.length) {
+          document.getElementById('loader-status').innerHTML =
+            '<span style="color:#ef4444">✖ Phaser 加载失败，请检查网络</span>';
+          return;
+        }
+        var src = sources[idx++];
+        var s = document.createElement('script');
+        s.src = src;
+        s.async = false;
+        s.onload = function () {
+          var t = Date.now() - startTs;
+          document.getElementById('loader-status').innerHTML =
+            '<span style="color:#22c55e">✓ Phaser 已加载</span>' +
+            '<span style="color:#666;margin-left:8px">(' + src.split('/')[2] || 'local' + ' · ' + t + 'ms)</span>';
+          // 启动游戏
+          var g = document.createElement('script');
+          g.src = '/js/game.js';
+          document.head.appendChild(g);
+        };
+        s.onerror = function () {
+          tryLoad();
+        };
+        document.head.appendChild(s);
+      }
+      // DOM ready 后启动
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', tryLoad);
+      } else {
+        tryLoad();
+      }
+    })();
+  </script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     :root {
       --black: #0a0a0a;
       --black-2: #141414;
@@ -20,67 +73,122 @@
       --red-dark: #991b1b;
     }
     html, body {
-      font-family: 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+      font-family: 'JetBrains Mono', 'Fira Code', Menlo, Consolas, -apple-system, monospace;
       background: var(--black);
       color: var(--text);
       overflow: hidden;
       height: 100vh;
+      height: 100dvh;
       width: 100vw;
+      width: 100dvw;
       display: flex;
       flex-direction: column;
       letter-spacing: 0.02em;
+      touch-action: manipulation;
+      overscroll-behavior: none;
+    }
+    /* 强制横屏提示遮罩 */
+    #orient-mask {
+      display: none;
+      position: fixed; inset: 0; z-index: 99999;
+      background: var(--black); color: var(--text);
+      justify-content: center; align-items: center; flex-direction: column;
+      text-align: center; padding: 30px;
+    }
+    #orient-mask.show { display: flex; }
+    #orient-mask .icon {
+      font-size: 64px; margin-bottom: 20px;
+      animation: spin-phone 1.5s ease-in-out infinite;
+    }
+    @keyframes spin-phone {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(-90deg); }
+    }
+    #orient-mask h3 { font-size: 16px; letter-spacing: 0.2em; margin-bottom: 8px; color: var(--red); }
+    #orient-mask p { font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+    /* Loader */
+    #loader {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: var(--black); z-index: 99998;
+    }
+    #loader.done { opacity: 0; pointer-events: none; transition: opacity 0.4s; }
+    #loader-box { text-align: center; }
+    #loader-title {
+      font-size: 14px; letter-spacing: 0.4em; color: var(--red);
+      margin-bottom: 14px; font-weight: 700;
+    }
+    #loader-bar-wrap {
+      width: 180px; height: 2px; background: var(--line-2);
+      overflow: hidden; margin: 0 auto 14px;
+    }
+    #loader-bar {
+      width: 0%; height: 100%; background: var(--green);
+      animation: loader-anim 1.2s ease-in-out infinite;
+    }
+    @keyframes loader-anim {
+      0% { width: 0; margin-left: 0; }
+      50% { width: 60%; margin-left: 20%; }
+      100% { width: 0; margin-left: 100%; }
+    }
+    #loader-status {
+      font-size: 10px; letter-spacing: 0.15em; color: var(--muted);
     }
 
     /* ====== Toolbar ====== */
     #toolbar {
       background: var(--black);
-      padding: 14px 20px;
+      padding: 10px 14px;
       display: flex;
       align-items: center;
-      gap: 20px;
+      gap: 12px;
       border-bottom: 1px solid var(--line);
       flex-wrap: wrap;
       font-size: 12px;
+      flex-shrink: 0;
     }
     .toolbar-title {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       color: var(--red);
       letter-spacing: 0.2em;
       text-transform: uppercase;
-      padding-right: 20px;
+      padding-right: 14px;
       border-right: 1px solid var(--line);
+      white-space: nowrap;
     }
     .tool-group {
       display: flex;
-      gap: 6px;
+      gap: 5px;
       align-items: center;
     }
     .tool-group-label {
-      font-size: 10px;
+      font-size: 9px;
       color: var(--muted);
       letter-spacing: 0.15em;
       text-transform: uppercase;
-      margin-right: 4px;
+      margin-right: 3px;
+      white-space: nowrap;
     }
     .tool-btn {
-      padding: 7px 12px;
+      padding: 6px 10px;
       border: 1px solid var(--line-2);
       background: var(--black);
       color: var(--text);
       cursor: pointer;
       font-family: inherit;
-      font-size: 11px;
+      font-size: 10px;
       letter-spacing: 0.05em;
       transition: border-color 0.12s, color 0.12s, background 0.12s;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       user-select: none;
+      -webkit-user-select: none;
+      white-space: nowrap;
     }
-    .tool-btn:hover {
-      border-color: var(--text);
-    }
+    .tool-btn:active { transform: scale(0.97); }
+    .tool-btn:hover { border-color: var(--text); }
     .tool-btn.active {
       background: var(--green);
       border-color: var(--green);
@@ -105,9 +213,10 @@
     .tool-btn.zombie-tank:hover { border-color: var(--red); }
 
     .tool-icon {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
       display: inline-block;
+      flex-shrink: 0;
     }
     .icon-sm { background: var(--green); }
     .icon-sf { background: var(--green); }
@@ -117,31 +226,48 @@
 
     .divider {
       width: 1px;
-      height: 22px;
+      height: 20px;
       background: var(--line);
+      flex-shrink: 0;
     }
     .control-btn {
-      padding: 7px 11px;
+      padding: 6px 10px;
       border: 1px solid var(--line-2);
       background: var(--black);
       color: var(--text);
       cursor: pointer;
       font-family: inherit;
-      font-size: 11px;
+      font-size: 10px;
       letter-spacing: 0.05em;
       transition: border-color 0.12s, color 0.12s, background 0.12s;
+      white-space: nowrap;
+      -webkit-user-select: none;
     }
-    .control-btn:hover {
-      border-color: var(--text);
-    }
+    .control-btn:active { transform: scale(0.97); }
+    .control-btn:hover { border-color: var(--text); }
     .control-btn.danger {
       border-color: var(--red-dark);
       color: var(--red);
     }
+    .control-btn.danger:active,
     .control-btn.danger:hover {
       background: var(--red);
       color: var(--black);
       border-color: var(--red);
+    }
+    /* 横屏全屏按钮 (移动端高亮) */
+    .control-btn.landscape {
+      border-color: var(--green-dark);
+      color: var(--green);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .control-btn.landscape:active,
+    .control-btn.landscape:hover {
+      background: var(--green);
+      color: var(--black);
+      border-color: var(--green);
     }
 
     /* ====== Game Area ====== */
@@ -150,32 +276,33 @@
       position: relative;
       overflow: hidden;
       background: var(--black);
+      min-height: 0;
     }
     #status-bar {
       position: absolute;
-      top: 20px;
-      right: 20px;
+      top: 12px;
+      right: 12px;
       background: var(--black);
       border: 1px solid var(--line);
-      padding: 14px 18px;
-      font-size: 11px;
+      padding: 10px 14px;
+      font-size: 10px;
       letter-spacing: 0.08em;
-      min-width: 170px;
+      min-width: 140px;
     }
     .status-row {
       display: flex;
       justify-content: space-between;
-      padding: 3px 0;
+      padding: 2px 0;
     }
     .status-row + .status-row {
       border-top: 1px solid var(--line);
-      margin-top: 3px;
-      padding-top: 6px;
+      margin-top: 2px;
+      padding-top: 4px;
     }
     .status-label {
       color: var(--muted);
       text-transform: uppercase;
-      font-size: 10px;
+      font-size: 9px;
       letter-spacing: 0.15em;
     }
     .status-value {
@@ -189,14 +316,14 @@
 
     #asset-hint {
       position: absolute;
-      bottom: 20px;
-      left: 20px;
+      bottom: 10px;
+      left: 10px;
       background: var(--black);
       border: 1px solid var(--line);
-      padding: 10px 14px;
-      font-size: 10px;
+      padding: 8px 10px;
+      font-size: 9px;
       color: var(--muted);
-      max-width: 420px;
+      max-width: 360px;
       letter-spacing: 0.03em;
       line-height: 1.6;
     }
@@ -208,9 +335,9 @@
     #asset-hint code {
       color: var(--text);
       background: var(--black-2);
-      padding: 1px 4px;
+      padding: 1px 3px;
       border: 1px solid var(--line);
-      font-size: 10px;
+      font-size: 9px;
     }
 
     #tooltip {
@@ -219,49 +346,149 @@
       background: var(--black);
       border: 1px solid var(--red);
       color: var(--text);
-      padding: 4px 8px;
-      font-size: 10px;
+      padding: 3px 6px;
+      font-size: 9px;
       display: none;
       z-index: 100;
     }
+
+    /* ====== 移动端适配 ====== */
+    @media (max-width: 768px), (pointer: coarse) {
+      #toolbar { padding: 8px 10px; gap: 8px; }
+      .toolbar-title { font-size: 11px; letter-spacing: 0.15em; padding-right: 10px; }
+      .tool-btn { padding: 8px 8px; font-size: 9px; gap: 4px; }
+      .control-btn { padding: 8px 8px; font-size: 9px; }
+      .tool-group-label { display: none; }
+      .divider { height: 18px; }
+      #status-bar {
+        top: 8px; right: 8px;
+        padding: 7px 10px; min-width: 110px;
+      }
+      #asset-hint {
+        font-size: 8px; max-width: 260px;
+        padding: 6px 8px; left: 6px; bottom: 6px;
+      }
+    }
+    /* 小屏手机:标题隐藏,图标-only按钮 */
+    @media (max-width: 560px) {
+      .toolbar-title { display: none; }
+      .tool-btn span:not(.tool-icon) { display: none; }
+      .tool-btn { padding: 10px 8px; }
+      .tool-icon { width: 10px; height: 10px; }
+      #status-bar { font-size: 9px; }
+    }
+    /* 横屏手机:更紧凑 */
+    @media (max-height: 500px) and (orientation: landscape) {
+      #toolbar { padding: 5px 10px; gap: 6px; }
+      .tool-btn, .control-btn { padding: 4px 8px; font-size: 9px; }
+      #status-bar { padding: 5px 10px; }
+    }
+    /* ====== 强制横屏 fallback (iOS Safari / 不支持 orientation lock 的浏览器) ====== */
+    html.force-landscape, html.force-landscape body {
+      width: 100vh !important;
+      height: 100vw !important;
+      overflow: hidden !important;
+      position: fixed !important;
+      top: 0; left: 0;
+    }
+    html.force-landscape body {
+      transform: rotate(90deg);
+      transform-origin: bottom left;
+      position: absolute;
+      top: -100vw;
+      left: 0;
+      width: 100vh;
+      height: 100vw;
+    }
+    html.force-landscape #orient-mask.show { display: none !important; }
+    html.force-landscape-ccw, html.force-landscape-ccw body {
+      width: 100vh !important;
+      height: 100vw !important;
+      overflow: hidden !important;
+      position: fixed !important;
+    }
+    html.force-landscape-ccw body {
+      transform: rotate(-90deg);
+      transform-origin: top left;
+      position: absolute;
+      top: 0;
+      left: 100vh;
+      width: 100vh;
+      height: 100vw;
+    }
+    html.force-landscape-ccw #orient-mask.show { display: none !important; }
+
+    /* 按钮点击态小动画 */
+    .landscape-loading::after {
+      content: '';
+      display: inline-block;
+      width: 10px; height: 10px;
+      margin-left: 6px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: rot 0.6s linear infinite;
+    }
+    @keyframes rot { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
+  <!-- Loader -->
+  <div id="loader">
+    <div id="loader-box">
+      <div id="loader-title">&#9760; ZOMBIE SANDBOX</div>
+      <div id="loader-bar-wrap"><div id="loader-bar"></div></div>
+      <div id="loader-status">正在加载游戏引擎...</div>
+    </div>
+  </div>
+
+  <!-- 竖屏提示遮罩 -->
+  <div id="orient-mask">
+    <div class="icon">&#128241;</div>
+    <h3>请横屏使用</h3>
+    <p>为获得最佳体验<br/>请将手机旋转至横向模式<br/>或点击上方 [↻ 横屏全屏] 按钮</p>
+  </div>
+
   <div id="toolbar">
     <span class="toolbar-title">&#9760; Zombie Sandbox</span>
 
     <div class="tool-group">
-      <span class="tool-group-label">SURVIVORS</span>
+      <span class="tool-group-label">SURV</span>
       <button class="tool-btn survivor-male" data-type="survivor_male" title="Male Survivor [1]">
-        <span class="tool-icon icon-sm"></span>MALE
+        <span class="tool-icon icon-sm"></span><span>MALE</span>
       </button>
       <button class="tool-btn survivor-female" data-type="survivor_female" title="Female Survivor [2]">
-        <span class="tool-icon icon-sf"></span>FEMALE
+        <span class="tool-icon icon-sf"></span><span>FEMALE</span>
       </button>
     </div>
 
     <div class="divider"></div>
 
     <div class="tool-group">
-      <span class="tool-group-label">ZOMBIES</span>
+      <span class="tool-group-label">ZOMB</span>
       <button class="tool-btn zombie-normal" data-type="zombie_normal" title="Normal Zombie [3]">
-        <span class="tool-icon icon-zn"></span>NORMAL
+        <span class="tool-icon icon-zn"></span><span>NORMAL</span>
       </button>
       <button class="tool-btn zombie-fast" data-type="zombie_fast" title="Fast Zombie [4]">
-        <span class="tool-icon icon-zf"></span>FAST
+        <span class="tool-icon icon-zf"></span><span>FAST</span>
       </button>
       <button class="tool-btn zombie-tank" data-type="zombie_tank" title="Tank Zombie [5]">
-        <span class="tool-icon icon-zt"></span>TANK
+        <span class="tool-icon icon-zt"></span><span>TANK</span>
       </button>
     </div>
 
     <div class="divider"></div>
 
     <div class="tool-group">
-      <button class="control-btn" id="btn-pause">&#9646;&#9646; PAUSE</button>
-      <button class="control-btn" id="btn-speed">&#9654;&#9654; 1X</button>
-      <button class="control-btn danger" id="btn-clear">&#215; CLEAR ALL</button>
-      <button class="control-btn danger" id="btn-clear-zombies">&#9760; PURGE Z</button>
+      <button class="control-btn landscape" id="btn-landscape" title="横屏全屏">
+        &#8635; <span>LANDSCAPE</span>
+      </button>
+      <button class="control-btn" id="btn-pause">&#9646;&#9646; <span>PAUSE</span></button>
+      <button class="control-btn" id="btn-speed">&#9654;&#9654; <span>1X</span></button>
+    </div>
+    <div class="tool-group">
+      <button class="control-btn danger" id="btn-clear">&#215; <span>CLEAR</span></button>
+      <button class="control-btn danger" id="btn-clear-zombies">&#9760; <span>PURGE</span></button>
     </div>
   </div>
 
@@ -273,12 +500,10 @@
       <div class="status-row"><span class="status-label">COMBAT</span><span class="status-value" id="count-fights">0</span></div>
     </div>
     <div id="asset-hint">
-      <strong>NOTE</strong> &mdash; Extract your sprite assets into
-      <code>public/assets/sprites/</code> sub-folders to replace the generated placeholders.
+      <strong>NOTE</strong> &mdash; 点击上方 [SURV/ZOMB] 按钮选择角色，再点击场景放置。<br/>
+      移动端点击 <span style="color:var(--green)">[&#8635; LANDSCAPE]</span> 进入横屏全屏。
     </div>
     <div id="tooltip"></div>
   </div>
-
-  <script src="/js/game.js"></script>
 </body>
 </html>

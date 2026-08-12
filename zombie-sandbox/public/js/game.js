@@ -4,9 +4,27 @@
 // ============================================================
 
 // ---------- 角色配置常量 ----------
+const PALETTE = {
+  green: 0x22c55e,
+  greenDark: 0x15803d,
+  greenDarker: 0x0f5c2b,
+  red: 0xef4444,
+  redDark: 0x991b1b,
+  redDarker: 0x6b0f10,
+  skin: 0xe5c5a5,
+  skinZ: 0x8a7a6a,
+  black: 0x0a0a0a,
+  black2: 0x141414,
+  line: 0x1f1f1f,
+  line2: 0x2a2a2a,
+  text: 0xe0e0e0,
+  muted: 0x666666,
+  white: 0xffffff
+};
+
 const ENTITY_CONFIG = {
   survivor_male: {
-    name: '男幸存者',
+    name: 'MALE',
     category: 'survivor',
     hp: 100, maxHp: 100,
     speed: 80,
@@ -15,14 +33,14 @@ const ENTITY_CONFIG = {
     attackCooldown: 800,
     detectRange: 220,
     fleeRange: 80,
-    aggression: 0.35, // 反击倾向
-    color: 0x4ecca3,
-    accentColor: 0x2d8b70,
-    skinColor: 0xf4c299,
+    aggression: 0.35,
+    color: PALETTE.green,
+    accentColor: PALETTE.greenDark,
+    skinColor: PALETTE.skin,
     size: 14
   },
   survivor_female: {
-    name: '女幸存者',
+    name: 'FEMALE',
     category: 'survivor',
     hp: 85, maxHp: 85,
     speed: 92,
@@ -32,13 +50,13 @@ const ENTITY_CONFIG = {
     detectRange: 260,
     fleeRange: 100,
     aggression: 0.2,
-    color: 0xff7675,
-    accentColor: 0xd64948,
-    skinColor: 0xf6cfb2,
+    color: PALETTE.green,
+    accentColor: PALETTE.greenDarker,
+    skinColor: PALETTE.skin,
     size: 13
   },
   zombie_normal: {
-    name: '普通丧尸',
+    name: 'NORMAL',
     category: 'zombie',
     hp: 100, maxHp: 100,
     speed: 45,
@@ -46,13 +64,13 @@ const ENTITY_CONFIG = {
     attackRange: 28,
     attackCooldown: 1000,
     detectRange: 280,
-    color: 0x6c5ce7,
-    accentColor: 0x3d2d8c,
-    skinColor: 0x8e88c9,
+    color: PALETTE.red,
+    accentColor: PALETTE.redDark,
+    skinColor: PALETTE.skinZ,
     size: 14
   },
   zombie_fast: {
-    name: '快速丧尸',
+    name: 'FAST',
     category: 'zombie',
     hp: 55, maxHp: 55,
     speed: 115,
@@ -60,13 +78,13 @@ const ENTITY_CONFIG = {
     attackRange: 26,
     attackCooldown: 550,
     detectRange: 320,
-    color: 0xfdcb6e,
-    accentColor: 0xd4a437,
-    skinColor: 0xf7e2a8,
+    color: PALETTE.red,
+    accentColor: PALETTE.redDark,
+    skinColor: PALETTE.skinZ,
     size: 12
   },
   zombie_tank: {
-    name: '坦克丧尸',
+    name: 'TANK',
     category: 'zombie',
     hp: 320, maxHp: 320,
     speed: 28,
@@ -74,9 +92,9 @@ const ENTITY_CONFIG = {
     attackRange: 34,
     attackCooldown: 1400,
     detectRange: 250,
-    color: 0xd63031,
-    accentColor: 0x8a1313,
-    skinColor: 0xa55a5b,
+    color: PALETTE.red,
+    accentColor: PALETTE.redDarker,
+    skinColor: PALETTE.skinZ,
     size: 19
   }
 };
@@ -149,85 +167,90 @@ class BootScene extends Phaser.Scene {
     this.scene.start('GameScene');
   }
 
-  // ---- 程序化生成角色纹理 ----
-  generateCharacterTexture(type, cfg, useCustomFallback) {
+  // ---- 极简程序化角色纹理 ----
+  generateCharacterTexture(type, cfg) {
     const size = cfg.size * 3;
     const w = size * 2;
     const h = size * 2.4;
     const g = this.add.graphics();
+    const isSurvivor = cfg.category === 'survivor';
+    const primColor = isSurvivor ? PALETTE.green : PALETTE.red;
+    const darkColor = isSurvivor ? PALETTE.greenDark : PALETTE.redDark;
 
-    // 阴影
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(w / 2, h - 4, size * 1.3, size * 0.5);
+    // 阴影 - 纯黑方块
+    g.fillStyle(PALETTE.black, 0.5);
+    g.fillRect(w / 2 - size * 0.7, h - size * 0.25, size * 1.4, size * 0.18);
 
-    // 身体
-    g.fillStyle(cfg.color, 1);
-    g.fillRoundedRect(w / 2 - size * 0.55, h / 2 - 2, size * 1.1, size * 1.2, size * 0.25);
+    // 身体 - 极简矩形
+    g.fillStyle(primColor, 1);
+    g.fillRect(w / 2 - size * 0.55, h / 2, size * 1.1, size * 1.05);
+    // 身体描边
+    g.lineStyle(2, PALETTE.black, 1);
+    g.strokeRect(w / 2 - size * 0.55, h / 2, size * 1.1, size * 1.05);
+    // 身体下半深色块
+    g.fillStyle(darkColor, 1);
+    g.fillRect(w / 2 - size * 0.55, h / 2 + size * 0.65, size * 1.1, size * 0.4);
+    g.lineStyle(2, PALETTE.black, 1);
+    g.strokeRect(w / 2 - size * 0.55, h / 2 + size * 0.65, size * 1.1, size * 0.4);
 
-    // 身体阴影
-    g.fillStyle(cfg.accentColor, 0.6);
-    g.fillRoundedRect(w / 2 - size * 0.55, h / 2 + size * 0.5, size * 1.1, size * 0.4, size * 0.2);
-
-    // 头部
+    // 头部 - 极简方块+描边
     g.fillStyle(cfg.skinColor, 1);
-    g.fillCircle(w / 2, h / 2 - size * 0.6, size * 0.55);
+    g.fillRect(w / 2 - size * 0.5, h / 2 - size * 0.95, size, size * 0.95);
+    g.lineStyle(2, PALETTE.black, 1);
+    g.strokeRect(w / 2 - size * 0.5, h / 2 - size * 0.95, size, size * 0.95);
 
-    // 头部阴影
-    g.fillStyle(cfg.accentColor, cfg.category === 'zombie' ? 0.4 : 0.2);
-    g.fillCircle(w / 2 + size * 0.15, h / 2 - size * 0.45, size * 0.3);
-
-    // 眼睛
-    if (cfg.category === 'zombie') {
-      // 丧尸眼睛 - 红色/发光
-      g.fillStyle(0xff2222, 1);
-      g.fillCircle(w / 2 - size * 0.2, h / 2 - size * 0.6, size * 0.1);
-      g.fillCircle(w / 2 + size * 0.2, h / 2 - size * 0.6, size * 0.1);
-      g.fillStyle(0xffff00, 0.4);
-      g.fillCircle(w / 2 - size * 0.2, h / 2 - size * 0.6, size * 0.05);
-      g.fillCircle(w / 2 + size * 0.2, h / 2 - size * 0.6, size * 0.05);
-
-      // 血污嘴巴
-      g.fillStyle(0x8a0303, 0.9);
-      g.fillRoundedRect(w / 2 - size * 0.18, h / 2 - size * 0.38, size * 0.36, size * 0.08, 2);
-    } else {
-      // 幸存者眼睛
-      g.fillStyle(0x111111, 1);
-      g.fillCircle(w / 2 - size * 0.18, h / 2 - size * 0.6, size * 0.07);
-      g.fillCircle(w / 2 + size * 0.18, h / 2 - size * 0.6, size * 0.07);
-      // 嘴巴
-      g.lineStyle(size * 0.05, 0x553322, 1);
-      g.beginPath();
-      g.moveTo(w / 2 - size * 0.12, h / 2 - size * 0.42);
-      g.lineTo(w / 2 + size * 0.12, h / 2 - size * 0.42);
-      g.strokePath();
-    }
-
-    // 特征装饰
+    // 角色类型特征条带
     if (type === 'survivor_male') {
-      // 短发
-      g.fillStyle(0x3d2914, 1);
-      g.fillEllipse(w / 2, h / 2 - size * 0.88, size * 0.65, size * 0.25);
+      // 顶部水平条（帽子）
+      g.fillStyle(PALETTE.black, 1);
+      g.fillRect(w / 2 - size * 0.5, h / 2 - size * 0.95, size, size * 0.25);
     } else if (type === 'survivor_female') {
-      // 长发马尾
-      g.fillStyle(0x5c3a1e, 1);
-      g.fillEllipse(w / 2, h / 2 - size * 0.82, size * 0.62, size * 0.22);
-      g.fillEllipse(w / 2 + size * 0.35, h / 2 - size * 0.2, size * 0.18, size * 0.55);
+      // 侧边长条（马尾）
+      g.fillStyle(PALETTE.black, 1);
+      g.fillRect(w / 2 + size * 0.35, h / 2 - size * 0.85, size * 0.22, size * 1.1);
     } else if (type === 'zombie_fast') {
-      // 破损衣服条纹
-      g.lineStyle(2, cfg.accentColor, 0.8);
+      // 两条斜线（速度纹）
+      g.lineStyle(3, PALETTE.black, 1);
       g.beginPath();
-      g.moveTo(w / 2 - size * 0.5, h / 2 + size * 0.2);
-      g.lineTo(w / 2 + size * 0.5, h / 2 + size * 0.1);
-      g.moveTo(w / 2 - size * 0.5, h / 2 + size * 0.5);
+      g.moveTo(w / 2 - size * 0.5, h / 2 + size * 0.3);
+      g.lineTo(w / 2 + size * 0.1, h / 2 + size * 0.15);
+      g.moveTo(w / 2 - size * 0.1, h / 2 + size * 0.85);
       g.lineTo(w / 2 + size * 0.5, h / 2 + size * 0.6);
       g.strokePath();
     } else if (type === 'zombie_tank') {
-      // 肌肉线条 + 铁链
-      g.lineStyle(3, cfg.accentColor, 0.7);
-      g.strokeRoundedRect(w / 2 - size * 0.65, h / 2 - 5, size * 1.3, size * 1.3, size * 0.25);
-      g.fillStyle(0x555555, 1);
-      g.fillCircle(w / 2 - size * 0.7, h / 2 + size * 0.3, size * 0.12);
-      g.fillCircle(w / 2 + size * 0.7, h / 2 + size * 0.3, size * 0.12);
+      // 十字加强纹
+      g.lineStyle(4, PALETTE.black, 1);
+      g.beginPath();
+      g.moveTo(w / 2, h / 2 + size * 0.05);
+      g.lineTo(w / 2, h / 2 + size * 1.0);
+      g.moveTo(w / 2 - size * 0.55, h / 2 + size * 0.5);
+      g.lineTo(w / 2 + size * 0.55, h / 2 + size * 0.5);
+      g.strokePath();
+    }
+
+    // 面部 - 极简线/像素块
+    if (cfg.category === 'zombie') {
+      // 丧尸: 红色方块眼睛
+      g.fillStyle(PALETTE.red, 1);
+      g.fillRect(w / 2 - size * 0.35, h / 2 - size * 0.7, size * 0.18, size * 0.18);
+      g.fillRect(w / 2 + size * 0.17, h / 2 - size * 0.7, size * 0.18, size * 0.18);
+      g.fillStyle(PALETTE.black, 1);
+      g.fillRect(w / 2 - size * 0.28, h / 2 - size * 0.63, size * 0.05, size * 0.05);
+      g.fillRect(w / 2 + size * 0.24, h / 2 - size * 0.63, size * 0.05, size * 0.05);
+      // 嘴: 黑锯齿条
+      g.fillStyle(PALETTE.black, 1);
+      g.fillRect(w / 2 - size * 0.3, h / 2 - size * 0.3, size * 0.6, size * 0.12);
+    } else {
+      // 幸存者: 黑色小方块眼睛
+      g.fillStyle(PALETTE.black, 1);
+      g.fillRect(w / 2 - size * 0.32, h / 2 - size * 0.68, size * 0.12, size * 0.12);
+      g.fillRect(w / 2 + size * 0.2, h / 2 - size * 0.68, size * 0.12, size * 0.12);
+      // 嘴: 细横线
+      g.lineStyle(1.5, PALETTE.black, 1);
+      g.beginPath();
+      g.moveTo(w / 2 - size * 0.2, h / 2 - size * 0.3);
+      g.lineTo(w / 2 + size * 0.2, h / 2 - size * 0.3);
+      g.strokePath();
     }
 
     g.generateTexture(type, w, h);
@@ -235,52 +258,47 @@ class BootScene extends Phaser.Scene {
   }
 
   generateHpBarTextures() {
+    const W = 40, H = 5;
     // 背景
     const bg = this.add.graphics();
-    bg.fillStyle(0x111111, 0.8);
-    bg.fillRoundedRect(0, 0, 40, 6, 2);
-    bg.generateTexture('hpBarBg', 40, 6);
+    bg.fillStyle(PALETTE.black2, 1);
+    bg.fillRect(0, 0, W, H);
+    bg.lineStyle(1, PALETTE.line2, 1);
+    bg.strokeRect(0, 0, W, H);
+    bg.generateTexture('hpBarBg', W, H);
     bg.destroy();
-    // 绿色
+    // 绿
     const g = this.add.graphics();
-    g.fillStyle(0x4ecca3, 1);
-    g.fillRoundedRect(1, 1, 38, 4, 1);
-    g.generateTexture('hpBarGreen', 40, 6);
+    g.fillStyle(PALETTE.green, 1);
+    g.fillRect(1, 1, W - 2, H - 2);
+    g.generateTexture('hpBarGreen', W, H);
     g.destroy();
-    // 黄色
+    // 黄 (极简里保留但用橙红色调)
     const y = this.add.graphics();
-    y.fillStyle(0xf1c40f, 1);
-    y.fillRoundedRect(1, 1, 38, 4, 1);
-    y.generateTexture('hpBarYellow', 40, 6);
+    y.fillStyle(PALETTE.red, 0.65);
+    y.fillRect(1, 1, W - 2, H - 2);
+    y.generateTexture('hpBarYellow', W, H);
     y.destroy();
-    // 红色
+    // 红
     const r = this.add.graphics();
-    r.fillStyle(0xe74c3c, 1);
-    r.fillRoundedRect(1, 1, 38, 4, 1);
-    r.generateTexture('hpBarRed', 40, 6);
+    r.fillStyle(PALETTE.red, 1);
+    r.fillRect(1, 1, W - 2, H - 2);
+    r.generateTexture('hpBarRed', W, H);
     r.destroy();
   }
 
   generateFloorTexture() {
     const size = 64;
     const g = this.add.graphics();
-    g.fillStyle(0x2c3e50, 1);
+    g.fillStyle(PALETTE.black, 1);
     g.fillRect(0, 0, size, size);
-    // 地砖纹理
-    g.lineStyle(1, 0x34495e, 0.6);
+    // 极简网格线
+    g.lineStyle(1, PALETTE.line, 1);
     g.strokeRect(0, 0, size, size);
-    g.lineStyle(1, 0x1f2f3e, 0.8);
     g.beginPath();
     g.moveTo(size / 2, 0); g.lineTo(size / 2, size);
     g.moveTo(0, size / 2); g.lineTo(size, size / 2);
     g.strokePath();
-    // 污渍点缀
-    for (let i = 0; i < 8; i++) {
-      const x = Math.random() * size;
-      const y = Math.random() * size;
-      g.fillStyle(0x22303f, 0.7);
-      g.fillCircle(x, y, 1 + Math.random() * 2);
-    }
     g.generateTexture('floorTile', size, size);
     g.destroy();
   }
@@ -330,17 +348,18 @@ class GameScene extends Phaser.Scene {
     walls.create(width / 2, height, null).setSize(width * 2, t).setVisible(false).refreshBody();
     this.walls = walls;
 
-    // 地图边界装饰墙
+    // 地图边界装饰墙 - 极简
     const wallGfx = this.add.graphics();
-    wallGfx.fillStyle(0x0f1820, 0.95);
-    wallGfx.fillRect(0, 0, width, 8);
-    wallGfx.fillRect(0, height - 8, width, 8);
-    wallGfx.fillRect(0, 0, 8, height);
-    wallGfx.fillRect(width - 8, 0, 8, height);
-    wallGfx.lineStyle(2, 0xe94560, 0.5);
-    wallGfx.strokeRect(10, 10, width - 20, height - 20);
+    wallGfx.fillStyle(PALETTE.black2, 1);
+    wallGfx.fillRect(0, 0, width, 6);
+    wallGfx.fillRect(0, height - 6, width, 6);
+    wallGfx.fillRect(0, 0, 6, height);
+    wallGfx.fillRect(width - 6, 0, 6, height);
+    // 内部单线边框 (红)
+    wallGfx.lineStyle(1, PALETTE.red, 0.5);
+    wallGfx.strokeRect(16, 16, width - 32, height - 32);
 
-    // 装饰障碍 (掩体)
+    // 装饰障碍 (掩体) - 极简矩形
     this.obstacles = this.physics.add.staticGroup();
     const obstaclePositions = [
       { x: width * 0.2, y: height * 0.3, w: 80, h: 40 },
@@ -350,12 +369,12 @@ class GameScene extends Phaser.Scene {
       { x: width * 0.55, y: height * 0.5, w: 70, h: 50 }
     ];
     obstaclePositions.forEach(o => {
-      const body = this.obstacles.create(o.x, o.y, null).setSize(o.w, o.h).setVisible(false).refreshBody();
+      this.obstacles.create(o.x, o.y, null).setSize(o.w, o.h).setVisible(false).refreshBody();
       const og = this.add.graphics();
-      og.fillStyle(0x3d5062, 0.9);
-      og.fillRoundedRect(o.x - o.w / 2, o.y - o.h / 2, o.w, o.h, 4);
-      og.lineStyle(2, 0x546e7a, 0.8);
-      og.strokeRoundedRect(o.x - o.w / 2, o.y - o.h / 2, o.w, o.h, 4);
+      og.fillStyle(PALETTE.black2, 1);
+      og.fillRect(o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
+      og.lineStyle(1, PALETTE.line2, 1);
+      og.strokeRect(o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
     });
   }
 
@@ -368,14 +387,15 @@ class GameScene extends Phaser.Scene {
       this.spawnEntity(selectedTool, pointer.x, pointer.y);
     });
 
-    // 鼠标悬停预览
+    // 鼠标悬停预览 - 极简
     this.input.on('pointermove', (pointer) => {
       if (!this.placementPreview) {
         this.placementPreview = this.add.image(pointer.x, pointer.y, selectedTool || 'survivor_male');
-        this.placementPreview.setAlpha(0.45).setDepth(999);
-        this.placementPreviewLine = this.add.circle(pointer.x, pointer.y, 0, 0xffffff, 0.08);
-        this.placementPreviewLine.setStrokeStyle(1, 0xffffff, 0.3);
+        this.placementPreview.setAlpha(0.5).setDepth(999);
+        this.placementPreviewLine = this.add.circle(pointer.x, pointer.y, 0, 0, 0);
+        this.placementPreviewLine.setStrokeStyle(1, PALETTE.text, 0.15);
         this.placementPreviewLine.setDepth(998);
+        this.placementPreviewLine.setFillStyle(0, 0);
       }
       if (selectedTool) {
         this.placementPreview.setVisible(true);
@@ -385,7 +405,7 @@ class GameScene extends Phaser.Scene {
         this.placementPreviewLine.setVisible(true);
         this.placementPreviewLine.setPosition(pointer.x, pointer.y);
         this.placementPreviewLine.setRadius(cfg.detectRange);
-        this.placementPreviewLine.setStrokeStyle(1, cfg.color, 0.35);
+        this.placementPreviewLine.setStrokeStyle(1, cfg.color, 0.5);
       } else {
         this.placementPreview.setVisible(false);
         this.placementPreviewLine.setVisible(false);
@@ -426,14 +446,13 @@ class GameScene extends Phaser.Scene {
     ent.hpBar.setOrigin(0.05, 0.5);
     ent.hpBarBg.setOrigin(0.5, 0.5);
 
-    // 名字标签
+    // 名字标签 - 极简等宽字体
     ent.nameTag = this.add.text(x, y - cfg.size * 2.3, cfg.name, {
-      fontFamily: 'Segoe UI',
-      fontSize: '10px',
-      color: cfg.category === 'survivor' ? '#4ecca3' : '#e94560',
-      stroke: '#000',
-      strokeThickness: 2
-    }).setOrigin(0.5).setDepth(22).setAlpha(0.9);
+      fontFamily: 'JetBrains Mono, Menlo, Consolas, monospace',
+      fontSize: '9px',
+      color: cfg.category === 'survivor' ? '#22c55e' : '#ef4444',
+      letterSpacing: 1
+    }).setOrigin(0.5).setDepth(22).setAlpha(0.85);
 
     // 物理碰撞
     this.physics.add.collider(ent.sprite, this.walls);
@@ -616,11 +635,11 @@ class GameScene extends Phaser.Scene {
       ent.sprite.setFlipX(moveX < 0);
     }
 
-    // 受击闪烁消退
+    // 受击闪烁消退 - 极简红闪
     if (ent.hitFlash > 0) {
       ent.hitFlash -= dt;
       const flashOn = Math.floor(ent.hitFlash / 3) % 2 === 0;
-      ent.sprite.setTint(flashOn ? 0xff4444 : 0xffffff);
+      ent.sprite.setTint(flashOn ? PALETTE.red : PALETTE.white);
       if (ent.hitFlash <= 0) ent.sprite.clearTint();
     }
   }
@@ -652,7 +671,7 @@ class GameScene extends Phaser.Scene {
   killEntity(entity, killer) {
     entity.isDead = true;
     entity.sprite.setVelocity(0, 0);
-    entity.sprite.setTint(0x554444);
+    entity.sprite.setTint(PALETTE.muted);
     entity.sprite.setAngle(90);
     entity.sprite.setDepth(5);
     entity.sprite.body.enable = false;
@@ -660,10 +679,10 @@ class GameScene extends Phaser.Scene {
     entity.hpBarBg.destroy();
     entity.nameTag.destroy();
 
-    // 生成尸体幽灵
+    // 尸体阴影 - 极简矩形
     const corpseGfx = this.add.graphics();
-    corpseGfx.fillStyle(0x222222, 0.35);
-    corpseGfx.fillEllipse(0, 0, entity.cfg.size * 1.5, entity.cfg.size * 0.7);
+    corpseGfx.fillStyle(PALETTE.black, 0.5);
+    corpseGfx.fillRect(-entity.cfg.size, -entity.cfg.size * 0.3, entity.cfg.size * 2, entity.cfg.size * 0.6);
     corpseGfx.setPosition(entity.sprite.x, entity.sprite.y + entity.cfg.size * 0.5);
     corpseGfx.setDepth(4);
     this.corpses.push({ sprite: entity.sprite, gfx: corpseGfx });
@@ -675,32 +694,31 @@ class GameScene extends Phaser.Scene {
   }
 
   showAttackEffect(attacker, defender) {
-    // 攻击连线
+    // 攻击连线 - 极简单色线
     const fx = this.add.graphics();
-    fx.lineStyle(2, attacker.cfg.color, 0.9);
+    fx.lineStyle(1, attacker.cfg.color, 1);
     fx.beginPath();
     fx.moveTo(attacker.sprite.x, attacker.sprite.y - attacker.cfg.size * 0.3);
     fx.lineTo(defender.sprite.x, defender.sprite.y - defender.cfg.size * 0.4);
     fx.strokePath();
-    // 火花
-    const sparkCount = 5;
+    // 极简火花 (小方块)
+    const sparkCount = 3;
     for (let i = 0; i < sparkCount; i++) {
-      const sx = defender.sprite.x + Phaser.Math.FloatBetween(-8, 8);
-      const sy = defender.sprite.y - defender.cfg.size * 0.4 + Phaser.Math.FloatBetween(-8, 8);
-      fx.fillStyle(attacker.cfg.category === 'zombie' ? 0xff3333 : 0xffff66, 0.9);
-      fx.fillCircle(sx, sy, 2);
+      const sx = defender.sprite.x + Phaser.Math.FloatBetween(-6, 6);
+      const sy = defender.sprite.y - defender.cfg.size * 0.4 + Phaser.Math.FloatBetween(-6, 6);
+      fx.fillStyle(attacker.cfg.color, 1);
+      fx.fillRect(sx - 1, sy - 1, 2, 2);
     }
     this.fightEffects.push({ sprite: fx, life: 180, maxLife: 180 });
   }
 
   showDamageNumber(x, y, dmg, isZombieAttack) {
-    const color = isZombieAttack ? '#ff5555' : '#ffe66d';
-    const txt = this.add.text(x + Phaser.Math.FloatBetween(-10, 10), y, `-${dmg}`, {
-      fontFamily: 'Segoe UI',
-      fontSize: 'bold 14px',
+    const color = isZombieAttack ? '#ef4444' : '#22c55e';
+    const txt = this.add.text(x + Phaser.Math.FloatBetween(-6, 6), y, `-${dmg}`, {
+      fontFamily: 'JetBrains Mono, Menlo, Consolas, monospace',
+      fontSize: 'bold 12px',
       color: color,
-      stroke: '#000',
-      strokeThickness: 3
+      letterSpacing: 0
     }).setOrigin(0.5).setDepth(30);
     this.fightEffects.push({ sprite: txt, life: 650, maxLife: 650 });
   }

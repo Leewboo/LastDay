@@ -3,163 +3,224 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>🧟 丧尸沙盒 - Zombie Sandbox</title>
+  <title>ZOMBIE SANDBOX</title>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-      background: #1a1a2e;
-      color: #eee;
+    :root {
+      --black: #0a0a0a;
+      --black-2: #141414;
+      --line: #1f1f1f;
+      --line-2: #2a2a2a;
+      --text: #e0e0e0;
+      --muted: #666666;
+      --green: #22c55e;
+      --green-dark: #15803d;
+      --red: #ef4444;
+      --red-dark: #991b1b;
+    }
+    html, body {
+      font-family: 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+      background: var(--black);
+      color: var(--text);
       overflow: hidden;
       height: 100vh;
+      width: 100vw;
       display: flex;
       flex-direction: column;
+      letter-spacing: 0.02em;
     }
+
+    /* ====== Toolbar ====== */
     #toolbar {
-      background: linear-gradient(180deg, #16213e, #0f3460);
-      padding: 10px 16px;
+      background: var(--black);
+      padding: 14px 20px;
       display: flex;
       align-items: center;
-      gap: 12px;
-      border-bottom: 2px solid #e94560;
+      gap: 20px;
+      border-bottom: 1px solid var(--line);
       flex-wrap: wrap;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+      font-size: 12px;
     }
     .toolbar-title {
-      font-size: 18px;
-      font-weight: bold;
-      color: #e94560;
-      margin-right: 8px;
-      text-shadow: 0 0 10px rgba(233, 69, 96, 0.5);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--red);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      padding-right: 20px;
+      border-right: 1px solid var(--line);
     }
     .tool-group {
       display: flex;
-      gap: 8px;
+      gap: 6px;
       align-items: center;
     }
     .tool-group-label {
-      font-size: 12px;
-      color: #aaa;
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
       margin-right: 4px;
     }
     .tool-btn {
-      padding: 8px 14px;
-      border: 2px solid #533483;
-      border-radius: 8px;
-      background: #1a1a2e;
-      color: #eee;
+      padding: 7px 12px;
+      border: 1px solid var(--line-2);
+      background: var(--black);
+      color: var(--text);
       cursor: pointer;
-      font-size: 13px;
-      transition: all 0.2s;
+      font-family: inherit;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      transition: border-color 0.12s, color 0.12s, background 0.12s;
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       user-select: none;
     }
     .tool-btn:hover {
-      background: #533483;
-      transform: translateY(-1px);
+      border-color: var(--text);
     }
     .tool-btn.active {
-      background: #e94560;
-      border-color: #e94560;
-      box-shadow: 0 0 15px rgba(233, 69, 96, 0.5);
+      background: var(--green);
+      border-color: var(--green);
+      color: var(--black);
     }
-    .tool-btn.survivor-male { border-color: #4ecca3; }
-    .tool-btn.survivor-male.active { background: #4ecca3; border-color: #4ecca3; box-shadow: 0 0 15px rgba(78, 204, 163, 0.5); }
-    .tool-btn.survivor-female { border-color: #ff7675; }
-    .tool-btn.survivor-female.active { background: #ff7675; border-color: #ff7675; box-shadow: 0 0 15px rgba(255, 118, 117, 0.5); }
-    .tool-btn.zombie-normal { border-color: #6c5ce7; }
-    .tool-btn.zombie-normal.active { background: #6c5ce7; border-color: #6c5ce7; box-shadow: 0 0 15px rgba(108, 92, 231, 0.5); }
-    .tool-btn.zombie-fast { border-color: #fdcb6e; color: #1a1a2e; }
-    .tool-btn.zombie-fast.active { background: #fdcb6e; border-color: #fdcb6e; color: #1a1a2e; box-shadow: 0 0 15px rgba(253, 203, 110, 0.5); }
-    .tool-btn.zombie-tank { border-color: #d63031; }
-    .tool-btn.zombie-tank.active { background: #d63031; border-color: #d63031; box-shadow: 0 0 15px rgba(214, 48, 49, 0.5); }
+    .tool-btn.zombie-normal.active,
+    .tool-btn.zombie-fast.active,
+    .tool-btn.zombie-tank.active {
+      background: var(--red);
+      border-color: var(--red);
+      color: var(--black);
+    }
+    .tool-btn.survivor-male { border-color: var(--green-dark); }
+    .tool-btn.survivor-male:hover { border-color: var(--green); }
+    .tool-btn.survivor-female { border-color: var(--green-dark); }
+    .tool-btn.survivor-female:hover { border-color: var(--green); }
+    .tool-btn.zombie-normal { border-color: var(--red-dark); }
+    .tool-btn.zombie-normal:hover { border-color: var(--red); }
+    .tool-btn.zombie-fast { border-color: var(--red-dark); }
+    .tool-btn.zombie-fast:hover { border-color: var(--red); }
+    .tool-btn.zombie-tank { border-color: var(--red-dark); }
+    .tool-btn.zombie-tank:hover { border-color: var(--red); }
 
     .tool-icon {
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
+      width: 8px;
+      height: 8px;
       display: inline-block;
     }
-    .icon-sm { background: #4ecca3; }
-    .icon-sf { background: #ff7675; }
-    .icon-zn { background: #6c5ce7; }
-    .icon-zf { background: #fdcb6e; }
-    .icon-zt { background: #d63031; }
+    .icon-sm { background: var(--green); }
+    .icon-sf { background: var(--green); }
+    .icon-zn { background: var(--red); }
+    .icon-zf { background: var(--red); }
+    .icon-zt { background: var(--red); }
 
     .divider {
       width: 1px;
-      height: 30px;
-      background: #533483;
+      height: 22px;
+      background: var(--line);
     }
     .control-btn {
-      padding: 8px 12px;
-      border-radius: 6px;
-      border: 1px solid #533483;
-      background: #0f3460;
-      color: #eee;
+      padding: 7px 11px;
+      border: 1px solid var(--line-2);
+      background: var(--black);
+      color: var(--text);
       cursor: pointer;
-      font-size: 12px;
-      transition: all 0.2s;
+      font-family: inherit;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      transition: border-color 0.12s, color 0.12s, background 0.12s;
     }
-    .control-btn:hover { background: #533483; }
-    .control-btn.danger { border-color: #e94560; }
-    .control-btn.danger:hover { background: #e94560; }
+    .control-btn:hover {
+      border-color: var(--text);
+    }
+    .control-btn.danger {
+      border-color: var(--red-dark);
+      color: var(--red);
+    }
+    .control-btn.danger:hover {
+      background: var(--red);
+      color: var(--black);
+      border-color: var(--red);
+    }
 
+    /* ====== Game Area ====== */
     #game-container {
       flex: 1;
       position: relative;
       overflow: hidden;
+      background: var(--black);
     }
     #status-bar {
       position: absolute;
-      top: 10px;
-      right: 10px;
-      background: rgba(22, 33, 62, 0.9);
-      border: 1px solid #533483;
-      border-radius: 8px;
-      padding: 10px 14px;
-      font-size: 12px;
-      min-width: 180px;
-      backdrop-filter: blur(4px);
+      top: 20px;
+      right: 20px;
+      background: var(--black);
+      border: 1px solid var(--line);
+      padding: 14px 18px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      min-width: 170px;
     }
     .status-row {
       display: flex;
       justify-content: space-between;
-      padding: 2px 0;
+      padding: 3px 0;
     }
-    .status-label { color: #aaa; }
-    .status-value { font-weight: bold; color: #fff; }
-    .status-value.survivors { color: #4ecca3; }
-    .status-value.zombies { color: #e94560; }
-    .status-value.dead { color: #888; }
+    .status-row + .status-row {
+      border-top: 1px solid var(--line);
+      margin-top: 3px;
+      padding-top: 6px;
+    }
+    .status-label {
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0.15em;
+    }
+    .status-value {
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .status-value.survivors { color: var(--green); }
+    .status-value.zombies { color: var(--red); }
+    .status-value.dead { color: var(--muted); }
 
     #asset-hint {
       position: absolute;
-      bottom: 10px;
-      left: 10px;
-      background: rgba(22, 33, 62, 0.85);
-      border: 1px solid #533483;
-      border-radius: 6px;
-      padding: 8px 12px;
-      font-size: 11px;
-      color: #aaa;
-      max-width: 400px;
-      backdrop-filter: blur(4px);
+      bottom: 20px;
+      left: 20px;
+      background: var(--black);
+      border: 1px solid var(--line);
+      padding: 10px 14px;
+      font-size: 10px;
+      color: var(--muted);
+      max-width: 420px;
+      letter-spacing: 0.03em;
+      line-height: 1.6;
     }
-    #asset-hint strong { color: #fdcb6e; }
+    #asset-hint strong {
+      color: var(--green);
+      font-weight: 700;
+      letter-spacing: 0.1em;
+    }
+    #asset-hint code {
+      color: var(--text);
+      background: var(--black-2);
+      padding: 1px 4px;
+      border: 1px solid var(--line);
+      font-size: 10px;
+    }
 
     #tooltip {
       position: absolute;
       pointer-events: none;
-      background: rgba(0,0,0,0.85);
-      border: 1px solid #e94560;
-      color: #fff;
+      background: var(--black);
+      border: 1px solid var(--red);
+      color: var(--text);
       padding: 4px 8px;
-      font-size: 11px;
-      border-radius: 4px;
+      font-size: 10px;
       display: none;
       z-index: 100;
     }
@@ -167,53 +228,53 @@
 </head>
 <body>
   <div id="toolbar">
-    <span class="toolbar-title">🧟 丧尸沙盒</span>
+    <span class="toolbar-title">&#9760; Zombie Sandbox</span>
 
     <div class="tool-group">
-      <span class="tool-group-label">幸存者:</span>
-      <button class="tool-btn survivor-male" data-type="survivor_male" title="放置男幸存者">
-        <span class="tool-icon icon-sm"></span>男幸存者
+      <span class="tool-group-label">SURVIVORS</span>
+      <button class="tool-btn survivor-male" data-type="survivor_male" title="Male Survivor [1]">
+        <span class="tool-icon icon-sm"></span>MALE
       </button>
-      <button class="tool-btn survivor-female" data-type="survivor_female" title="放置女幸存者">
-        <span class="tool-icon icon-sf"></span>女幸存者
+      <button class="tool-btn survivor-female" data-type="survivor_female" title="Female Survivor [2]">
+        <span class="tool-icon icon-sf"></span>FEMALE
       </button>
     </div>
 
     <div class="divider"></div>
 
     <div class="tool-group">
-      <span class="tool-group-label">丧尸:</span>
-      <button class="tool-btn zombie-normal" data-type="zombie_normal" title="普通丧尸 - 标准追击者">
-        <span class="tool-icon icon-zn"></span>普通丧尸
+      <span class="tool-group-label">ZOMBIES</span>
+      <button class="tool-btn zombie-normal" data-type="zombie_normal" title="Normal Zombie [3]">
+        <span class="tool-icon icon-zn"></span>NORMAL
       </button>
-      <button class="tool-btn zombie-fast" data-type="zombie_fast" title="快速丧尸 - 移动迅速但脆弱">
-        <span class="tool-icon icon-zf"></span>快速丧尸
+      <button class="tool-btn zombie-fast" data-type="zombie_fast" title="Fast Zombie [4]">
+        <span class="tool-icon icon-zf"></span>FAST
       </button>
-      <button class="tool-btn zombie-tank" data-type="zombie_tank" title="坦克丧尸 - 血厚伤害高但移动慢">
-        <span class="tool-icon icon-zt"></span>坦克丧尸
+      <button class="tool-btn zombie-tank" data-type="zombie_tank" title="Tank Zombie [5]">
+        <span class="tool-icon icon-zt"></span>TANK
       </button>
     </div>
 
     <div class="divider"></div>
 
     <div class="tool-group">
-      <button class="control-btn" id="btn-pause">⏸ 暂停</button>
-      <button class="control-btn" id="btn-speed">⏩ 1x 速度</button>
-      <button class="control-btn danger" id="btn-clear">🗑 清空全部</button>
-      <button class="control-btn danger" id="btn-clear-zombies">💀 清除丧尸</button>
+      <button class="control-btn" id="btn-pause">&#9646;&#9646; PAUSE</button>
+      <button class="control-btn" id="btn-speed">&#9654;&#9654; 1X</button>
+      <button class="control-btn danger" id="btn-clear">&#215; CLEAR ALL</button>
+      <button class="control-btn danger" id="btn-clear-zombies">&#9760; PURGE Z</button>
     </div>
   </div>
 
   <div id="game-container">
     <div id="status-bar">
-      <div class="status-row"><span class="status-label">幸存者:</span><span class="status-value survivors" id="count-survivors">0</span></div>
-      <div class="status-row"><span class="status-label">丧尸:</span><span class="status-value zombies" id="count-zombies">0</span></div>
-      <div class="status-row"><span class="status-label">死亡:</span><span class="status-value dead" id="count-dead">0</span></div>
-      <div class="status-row"><span class="status-label">战斗:</span><span class="status-value" id="count-fights">0</span></div>
+      <div class="status-row"><span class="status-label">SURVIVORS</span><span class="status-value survivors" id="count-survivors">0</span></div>
+      <div class="status-row"><span class="status-label">ZOMBIES</span><span class="status-value zombies" id="count-zombies">0</span></div>
+      <div class="status-row"><span class="status-label">DEAD</span><span class="status-value dead" id="count-dead">0</span></div>
+      <div class="status-row"><span class="status-label">COMBAT</span><span class="status-value" id="count-fights">0</span></div>
     </div>
     <div id="asset-hint">
-      <strong>💡 提示:</strong> 将下载的丧尸游戏资源解压至
-      <code>public/assets/sprites/</code> 对应目录即可使用真实素材。当前使用内置图形。
+      <strong>NOTE</strong> &mdash; Extract your sprite assets into
+      <code>public/assets/sprites/</code> sub-folders to replace the generated placeholders.
     </div>
     <div id="tooltip"></div>
   </div>

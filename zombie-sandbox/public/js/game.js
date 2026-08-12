@@ -647,31 +647,75 @@ class GameScene extends Phaser.Scene {
     const WORLD_W = GameScene.WORLD_W, WORLD_H = GameScene.WORLD_H;
     const MIN_Z = GameScene.MIN_ZOOM, MAX_Z = GameScene.MAX_ZOOM;
 
-    // --- 桌面: 按住右键拖动 或 按住左键(未选中工具时) 拖动 ---
-    let isDragging = false;
-    let dragStartCam = null;
-    let dragStartPointer = null;
+    // 触摸 / 鼠标按键统一判断（与 buildInputHandlers 同定义）
+    const isPrimaryDown = (p) => {
+      if (!p) return false;
+      if (typeof p.primaryDown === 'boolean') return p.primaryDown;
+      if (p.pointerType === 'touch' || p.pointerType === 'pen') return p.active && p.buttons !== 0;
+      return !!(p.leftButtonDown && p.leftButtonDown());
+    };
+    const isSecondaryDown = (p) => (p && p.pointerType === 'mouse') &&
+      (!!(p.rightButtonDown && p.rightButtonDown()) || p.button === 2);
+    const isMiddleDown = (p) => (p && p.pointerType === 'mouse') &&
+      (!!(p.middleButtonDown && p.middleButtonDown()) || p.button === 1);
+
+    // pointer 是否落在 HTML UI 上（兼容移动端/CSS横屏旋转）
     const isPointerInUI = (p) => {
-      // 点击坐标是世界坐标还是屏幕坐标? Phaser pointer.y 是DOM屏幕坐标
-      // 用浏览器原生 elementFromPoint 判断是否落在 html UI 上 (toolbar/fab/status-bar)
       if (typeof document === 'undefined') return false;
-      const el = document.elementFromPoint(p.x + document.getElementById('game-container').getBoundingClientRect().left,
-                                           p.y + document.getElementById('game-container').getBoundingClientRect().top);
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return false;
+      const cRect = canvas.getBoundingClientRect();
+      const isTouchLike = p.pointerType === 'touch' || p.pointerType === 'pen';
+      const forceLandscape = document.body.classList.contains('force-landscape');
+
+      if (isTouchLike || forceLandscape) {
+        const topHidden = document.body.classList.contains('hide-toolbar');
+        if (!topHidden) {
+          const toolbarH = document.getElementById('toolbar')?.offsetHeight || 60;
+          if (p.y < toolbarH) return true;
+        }
+        const canvasCx = (p.x * cRect.width / this.scale.width) + cRect.left;
+        const canvasCy = (p.y * cRect.height / this.scale.height) + cRect.top;
+        const hitRect = (r) => r && canvasCx >= r.left && canvasCx <= r.right && canvasCy >= r.top && canvasCy <= r.bottom;
+        const fab = document.getElementById('fab');
+        if (fab && hitRect(fab.getBoundingClientRect())) return true;
+        const panel = document.getElementById('fab-panel');
+        if (panel && panel.classList.contains('open') && hitRect(panel.getBoundingClientRect())) return true;
+        const statusBar = document.getElementById('status-bar');
+        if (statusBar && hitRect(statusBar.getBoundingClientRect())) return true;
+        return false;
+      }
+
+      const container = document.getElementById('game-container');
+      if (!container) return false;
+      const rect = container.getBoundingClientRect();
+      const el = document.elementFromPoint(p.x + rect.left, p.y + rect.top);
       if (!el) return false;
       let cur = el;
       while (cur) {
-        if (cur.id === 'toolbar' || cur.id === 'fab' || cur.id === 'fab-panel' || cur.id === 'status-bar' || cur.id === 'orient-mask') return true;
+        if (cur.id === 'toolbar' || cur.id === 'fab' || cur.id === 'fab-panel' ||
+            cur.id === 'status-bar' || cur.id === 'orient-mask' ||
+            cur.id === 'asset-hint' || cur.id === 'loader' || cur.id === 'tooltip') return true;
         cur = cur.parentElement;
       }
       return false;
     };
 
+    // --- 拖动 (桌面:右键/中键/无工具左键; 手机:没选中工具时单指拖动) ---
+    let isDragging = false;
+    let dragStartCam = null;
+    let dragStartPointer = null;
+
     this.input.on('pointerdown', (pointer) => {
-      const canDrag =
-        pointer.rightButtonDown() ||
-        pointer.middleButtonDown() ||
-        (!selectedTool && pointer.leftButtonDown());
-      if (!canDrag) { isDragging = false; return; }
+      const isLeft = isPrimaryDown(pointer);
+      const isRight = isSecondaryDown(pointer);
+      const isMid = isMiddleDown(pointer);
+      const isTouch = pointer.pointerType === 'touch' || pointer.pointerType === 'pen';
+      // 桌面: 右键/中键/无工具时左键；  触摸/笔: 无选中工具时直接拖动
+      const wantDrag = isRight || isMid ||
+        (!selectedTool && isLeft) ||
+        (isTouch && !selectedTool);
+      if (!wantDrag) { isDragging = false; return; }
       if (isPointerInUI(pointer)) { isDragging = false; return; }
       isDragging = true;
       dragStartCam = { x: cam.scrollX, y: cam.scrollY };
@@ -714,9 +758,9 @@ class GameScene extends Phaser.Scene {
     let pinchStartZoom = 1;
     let pinchStartCX = 0, pinchStartCY = 0;
     this.input.on('pointerdown', () => {
-      const p0 = this.input.pointers[0];
-      const p1 = this.input.pointers[1];
-      if (p0 && p1 && p0.active && p1.active) {
+      const p0 = this.input.pointers && this.input.pointers[0];
+      const p1 = this.input.pointers && this.input.pointers[1];
+      if (p0 && p1 && p0.active && p1.active && p0.x != null && p1.x != null) {
         pinchStartDist = Phaser.Math.Distance.Between(p0.x, p0.y, p1.x, p1.y);
         pinchStartZoom = cam.zoom;
         pinchStartCX = (p0.x + p1.x) / 2;
@@ -724,9 +768,9 @@ class GameScene extends Phaser.Scene {
       }
     });
     this.input.on('pointermove', () => {
-      const p0 = this.input.pointers[0];
-      const p1 = this.input.pointers[1];
-      if (!pinchStartDist || !p0 || !p1 || !p0.active || !p1.active) return;
+      const p0 = this.input.pointers && this.input.pointers[0];
+      const p1 = this.input.pointers && this.input.pointers[1];
+      if (!pinchStartDist || !p0 || !p1 || !p0.active || !p1.active || p0.x == null || p1.x == null) return;
       const d = Phaser.Math.Distance.Between(p0.x, p0.y, p1.x, p1.y);
       if (d < 5) return;
       const ratio = d / pinchStartDist;
@@ -790,8 +834,73 @@ class GameScene extends Phaser.Scene {
     const WORLD_W = GameScene.WORLD_W, WORLD_H = GameScene.WORLD_H;
     const getTopOffset = () => document.getElementById('toolbar')?.offsetHeight || 60;
     const isFabPanelOpen = () => document.getElementById('fab-panel')?.classList.contains('open');
+
+    // 触摸 / 鼠标按键统一判断（兼容手机端 pointer 没有 leftButtonDown）
+    // Phaser 的 pointerType: 'mouse' | 'touch' | 'pen'
+    const isPrimaryDown = (p) => {
+      if (!p) return false;
+      if (typeof p.primaryDown === 'boolean') return p.primaryDown;
+      if (p.pointerType === 'touch' || p.pointerType === 'pen') return p.active && p.buttons !== 0;
+      return !!(p.leftButtonDown && p.leftButtonDown());
+    };
+    const isSecondaryDown = (p) => {
+      if (!p || p.pointerType !== 'mouse') return false;
+      return !!(p.rightButtonDown && p.rightButtonDown()) || (p.button === 2);
+    };
+    const isMiddleDown = (p) => {
+      if (!p || p.pointerType !== 'mouse') return false;
+      return !!(p.middleButtonDown && p.middleButtonDown()) || (p.button === 1);
+    };
+
+    // 检测当前指针位置是否在 HTML UI 上
+    // 桌面端: 使用 elementFromPoint 精确命中
+    // 移动端 (含CSS强制横屏rotate): 只用几何判断, 不调用 elementFromPoint (因为坐标被 rotate 错位)
     const isPointerInHtmlUI = (p) => {
       if (typeof document === 'undefined') return false;
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return false;
+      const cRect = canvas.getBoundingClientRect();
+      const isTouchLike = p.pointerType === 'touch' || p.pointerType === 'pen';
+      const forceLandscape = document.body.classList.contains('force-landscape');
+
+      if (isTouchLike || forceLandscape) {
+        // 移动端/横屏旋转模式: 用几何规则判断, 不用 elementFromPoint
+        // 1. toolbar 顶栏 (除非已隐藏)
+        const topHidden = document.body.classList.contains('hide-toolbar');
+        if (!topHidden) {
+          const toolbarH = document.getElementById('toolbar')?.offsetHeight || 60;
+          if (p.y < toolbarH) return true;
+        }
+        // 2. 悬浮球 FAB (圆形) 左上角
+        const fab = document.getElementById('fab');
+        if (fab) {
+          const fRect = fab.getBoundingClientRect();
+          // fRect 是 DOM 里的 CSS 像素坐标（含 rotate）, 需要转换到 canvas 内部坐标系不现实
+          // 直接看屏幕坐标是否落在 FAB DOM 矩形内 (clientX/Y)
+          const cx = (p.x * cRect.width / this.scale.width) + cRect.left;
+          const cy = (p.y * cRect.height / this.scale.height) + cRect.top;
+          if (cx >= fRect.left && cx <= fRect.right && cy >= fRect.top && cy <= fRect.bottom) return true;
+        }
+        // 3. 悬浮面板 (打开状态)
+        const panel = document.getElementById('fab-panel');
+        if (panel && panel.classList.contains('open')) {
+          const pRect = panel.getBoundingClientRect();
+          const cx = (p.x * cRect.width / this.scale.width) + cRect.left;
+          const cy = (p.y * cRect.height / this.scale.height) + cRect.top;
+          if (cx >= pRect.left && cx <= pRect.right && cy >= pRect.top && cy <= pRect.bottom) return true;
+        }
+        // 4. 底部状态栏
+        const statusBar = document.getElementById('status-bar');
+        if (statusBar) {
+          const sRect = statusBar.getBoundingClientRect();
+          const cx = (p.x * cRect.width / this.scale.width) + cRect.left;
+          const cy = (p.y * cRect.height / this.scale.height) + cRect.top;
+          if (cx >= sRect.left && cx <= sRect.right && cy >= sRect.top && cy <= sRect.bottom) return true;
+        }
+        return false;
+      }
+
+      // 桌面端 / 非旋转模式: 原 elementFromPoint 方案
       const container = document.getElementById('game-container');
       if (!container) return false;
       const rect = container.getBoundingClientRect();
@@ -808,9 +917,10 @@ class GameScene extends Phaser.Scene {
     };
     let lastPlaceTs = 0;
     let touchStartPos = null;
-    let startedDragCam = false; // 此次 pointerdown 是否触发了摄像机拖拽
+    let lastPointerDown = null;   // fallback: 最后一次 pointerdown 信息
+    let startedDragCam = false;   // 此次 pointerdown 是否触发了摄像机拖拽
     const PLACE_MIN_INTERVAL = 120;
-    const MOVE_TOLERANCE = 12;
+    const MOVE_TOLERANCE = 18;    // 手机端手指点击有轻微滑动, 放宽 12→18
 
     const onPlace = (pointer) => {
       if (!selectedTool) return;
@@ -841,29 +951,51 @@ class GameScene extends Phaser.Scene {
     this.input.on('pointerdown', (pointer) => {
       startedDragCam = false;
       touchStartPos = null;
+      lastPointerDown = { x: pointer.x, y: pointer.y, id: pointer.id, ts: Date.now(), tool: selectedTool, type: pointer.pointerType };
       if (isPointerInHtmlUI(pointer)) return;
-      const leftNoTool = !selectedTool && pointer.leftButtonDown();
-      const wantDrag = pointer.rightButtonDown() || pointer.middleButtonDown() || leftNoTool;
+      // 兼容触摸: 鼠标用 LBD, 触摸用 primaryDown
+      const isLeft = isPrimaryDown(pointer);
+      const isRight = isSecondaryDown(pointer);
+      const isMid = isMiddleDown(pointer);
+      const isTouch = pointer.pointerType === 'touch' || pointer.pointerType === 'pen';
+      const leftNoTool = !selectedTool && isLeft;
+      // 触摸 / 笔 时, 如果没选中工具 → 拖动摄像机 (体验同桌面右键)
+      const touchNoTool = isTouch && !selectedTool;
+      const wantDrag = isRight || isMid || leftNoTool || touchNoTool;
       if (wantDrag) {
-        startedDragCam = true; // 摄像机 setupCameraControls 会处理
+        startedDragCam = true;
         return;
       }
-      // 只有"选中工具+左键点击"才认为是放置尝试
-      if (selectedTool && pointer.leftButtonDown()) {
+      // 选中工具 + 左键/触摸主按钮 = 放置尝试
+      if (selectedTool && isLeft) {
         touchStartPos = { x: pointer.x, y: pointer.y, id: pointer.id, ts: Date.now() };
       }
     });
     this.input.on('pointerup', (pointer) => {
       if (startedDragCam) { startedDragCam = false; return; }
-      if (!touchStartPos || touchStartPos.id !== pointer.id) { touchStartPos = null; return; }
-      const dx = Math.abs(pointer.x - touchStartPos.x);
-      const dy = Math.abs(pointer.y - touchStartPos.y);
-      touchStartPos = null;
-      if (dx < MOVE_TOLERANCE && dy < MOVE_TOLERANCE) {
-        onPlace(pointer);
+      let doPlace = false;
+      // 路径 A: 有明确的 touchStartPos 记录 (优先用)
+      if (touchStartPos && touchStartPos.id === pointer.id) {
+        const dx = Math.abs(pointer.x - touchStartPos.x);
+        const dy = Math.abs(pointer.y - touchStartPos.y);
+        touchStartPos = null;
+        if (dx < MOVE_TOLERANCE && dy < MOVE_TOLERANCE) doPlace = true;
       }
+      // 路径 B: fallback (手机端某些机型 leftButtonDown/primaryDown 仍返回 false 时)
+      // 条件: 选中工具 & 最后一次 pointerdown 有值 & 距离近 & 距离时间 < 500ms & id 一致 & 没有 UI 命中
+      if (!doPlace && selectedTool && lastPointerDown && lastPointerDown.id === pointer.id) {
+        const dt = Date.now() - lastPointerDown.ts;
+        const dx = Math.abs(pointer.x - lastPointerDown.x);
+        const dy = Math.abs(pointer.y - lastPointerDown.y);
+        if (dt < 500 && dx < MOVE_TOLERANCE && dy < MOVE_TOLERANCE && !isPointerInHtmlUI(pointer)) {
+          doPlace = true;
+        }
+      }
+      lastPointerDown = null;
+      touchStartPos = null;
+      if (doPlace) onPlace(pointer);
     });
-    this.input.on('pointerupoutside', () => { touchStartPos = null; startedDragCam = false; });
+    this.input.on('pointerupoutside', () => { touchStartPos = null; lastPointerDown = null; startedDragCam = false; });
 
     // 预览: 把屏幕坐标->世界坐标,跟随鼠标/手指
     this.input.on('pointermove', (pointer) => {

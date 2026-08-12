@@ -418,6 +418,199 @@
     }
     html.force-landscape-ccw #orient-mask.show { display: none !important; }
 
+    /* ====== 隐藏原顶栏 (进入悬浮球模式后): 使用 fixed + translateY 移出，不改变 game-container 尺寸 ====== */
+    body.hide-toolbar #toolbar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      transform: translateY(-200%);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 1;
+    }
+    /* 顶栏隐藏后,游戏容器不再留padding-top */
+    body.hide-toolbar {
+      padding-top: 0 !important;
+    }
+    body.hide-toolbar #game-container {
+      top: 0 !important;
+      height: 100vh !important;
+      padding-top: 0 !important;
+    }
+    body.hide-toolbar #asset-hint {
+      display: none;
+    }
+    /* 隐藏竖屏提示当处于悬浮球模式 */
+    body.hide-toolbar #orient-mask.show { display: none !important; }
+
+    /* ====== 悬浮球 ====== */
+    #fab {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #0f0f0f, #1c1c1c);
+      color: var(--green);
+      border: 2px solid var(--green);
+      box-shadow: 0 4px 14px rgba(34,197,94,0.35), 0 0 0 1px rgba(34,197,94,0.15) inset;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 2147483646;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      transition: transform 0.15s ease, opacity 0.2s ease;
+      opacity: 0;
+      pointer-events: none;
+      font-family: inherit;
+    }
+    #fab.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #fab:active { transform: scale(0.92); }
+    #fab.badge::before {
+      content: '';
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 8px;
+      height: 8px;
+      background: var(--red);
+      border-radius: 50%;
+      box-shadow: 0 0 6px var(--red);
+    }
+
+    /* ====== 浮动面板 ====== */
+    #fab-panel {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      max-width: 480px;
+      max-height: calc(100vh - 24px);
+      background: rgba(10,10,10,0.96);
+      border: 1.5px solid var(--green);
+      border-radius: 12px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.8), 0 0 0 1px rgba(34,197,94,0.1);
+      z-index: 2147483647;
+      padding: 14px;
+      color: var(--text);
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      transform: translateY(-20px) scale(0.96);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform 0.18s ease, opacity 0.18s ease;
+      font-family: inherit;
+    }
+    #fab-panel.open {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #fab-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(34,197,94,0.25);
+      font-weight: 700;
+      color: var(--green);
+      letter-spacing: 0.5px;
+      font-size: 14px;
+    }
+    #fab-panel-close {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 28px;
+      line-height: 1;
+      padding: 0 6px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      font-family: inherit;
+    }
+    #fab-panel-close:active { color: var(--red); }
+
+    .fab-section { margin-bottom: 14px; }
+    .fab-section:last-of-type { margin-bottom: 8px; }
+
+    .fab-section-title {
+      font-size: 11px;
+      color: var(--text-dim);
+      letter-spacing: 1.2px;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .fab-btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .fab-btn-row:last-child { margin-bottom: 0; }
+
+    .fab-btn {
+      flex: 1 1 auto;
+      min-width: 80px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 12px;
+      background: #111;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      -webkit-tap-highlight-color: transparent;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+    .fab-btn:active, .fab-btn.active {
+      border-color: var(--green);
+      color: var(--green);
+      background: rgba(34,197,94,0.08);
+      box-shadow: 0 0 0 2px rgba(34,197,94,0.15);
+    }
+    .fab-btn.landscape {
+      background: linear-gradient(180deg, rgba(34,197,94,0.18), rgba(34,197,94,0.06));
+      border-color: var(--green);
+      color: var(--green);
+    }
+    .fab-btn.danger {
+      border-color: rgba(239,68,68,0.5);
+      color: var(--red);
+    }
+    .fab-btn.danger:active {
+      background: rgba(239,68,68,0.1);
+      box-shadow: 0 0 0 2px rgba(239,68,68,0.2);
+    }
+    /* 悬浮球面板里的类型按钮激活态和toolbar一致（继承色） */
+    .fab-btn.survivor-male.active   { border-color: var(--green);   color: var(--green); }
+    .fab-btn.survivor-female.active { border-color: #f472b6;        color: #f472b6; }
+    .fab-btn.zombie-normal.active   { border-color: #60a5fa;        color: #60a5fa; }
+    .fab-btn.zombie-fast.active     { border-color: #f59e0b;        color: #f59e0b; }
+    .fab-btn.zombie-tank.active     { border-color: var(--red);     color: var(--red); }
+
+    #fab-panel-hint {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed rgba(34,197,94,0.2);
+      font-size: 10px;
+      color: var(--text-dim);
+      text-align: center;
+      letter-spacing: 0.3px;
+    }
+
     /* 按钮点击态小动画 */
     .landscape-loading::after {
       content: '';
@@ -504,6 +697,75 @@
       移动端点击 <span style="color:var(--green)">[&#8635; LANDSCAPE]</span> 进入横屏全屏。
     </div>
     <div id="tooltip"></div>
+  </div>
+
+  <!-- 悬浮球 (横屏模式下显示) -->
+  <button id="fab" type="button" aria-label="展开菜单" title="展开菜单">
+    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </button>
+
+  <!-- 浮动面板 (从悬浮球展开，包含所有toolbar按钮) -->
+  <div id="fab-panel" aria-hidden="true">
+    <div id="fab-panel-header">
+      <span>&#9760; Zombie Sandbox</span>
+      <button id="fab-panel-close" type="button" aria-label="关闭">&times;</button>
+    </div>
+
+    <div class="fab-section">
+      <div class="fab-section-title">SURVIVORS</div>
+      <div class="fab-btn-row">
+        <button class="fab-btn survivor-male" data-type="survivor_male">
+          <span class="tool-icon icon-sm"></span><span>MALE</span>
+        </button>
+        <button class="fab-btn survivor-female" data-type="survivor_female">
+          <span class="tool-icon icon-sf"></span><span>FEMALE</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="fab-section">
+      <div class="fab-section-title">ZOMBIES</div>
+      <div class="fab-btn-row">
+        <button class="fab-btn zombie-normal" data-type="zombie_normal">
+          <span class="tool-icon icon-zn"></span><span>NORMAL</span>
+        </button>
+        <button class="fab-btn zombie-fast" data-type="zombie_fast">
+          <span class="tool-icon icon-zf"></span><span>FAST</span>
+        </button>
+        <button class="fab-btn zombie-tank" data-type="zombie_tank">
+          <span class="tool-icon icon-zt"></span><span>TANK</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="fab-section">
+      <div class="fab-section-title">CONTROLS</div>
+      <div class="fab-btn-row">
+        <button class="fab-btn landscape" id="fab-btn-landscape">
+          &#8635; <span>LANDSCAPE</span>
+        </button>
+        <button class="fab-btn" id="fab-btn-pause">
+          &#9646;&#9646; <span>PAUSE</span>
+        </button>
+        <button class="fab-btn" id="fab-btn-speed">
+          &#9654;&#9654; <span>1X</span>
+        </button>
+      </div>
+      <div class="fab-btn-row">
+        <button class="fab-btn danger" id="fab-btn-clear">
+          &#215; <span>CLEAR ALL</span>
+        </button>
+        <button class="fab-btn danger" id="fab-btn-clear-zombies">
+          &#9760; <span>PURGE</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="fab-panel-hint">横屏游玩时点击左上角悬浮球呼出菜单</div>
   </div>
 </body>
 </html>

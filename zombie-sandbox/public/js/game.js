@@ -894,217 +894,297 @@ class GameScene extends Phaser.Scene {
 }
 
 // ============================================================
-//  工具栏 + 横屏全屏
+//  工具栏 + 横屏全屏 + 悬浮球面板
 // ============================================================
-function setupToolbar() {
-  document.querySelectorAll('.tool-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const type = btn.dataset.type;
-      if (selectedTool === type) {
-        selectedTool = null;
-        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
-      } else {
-        selectedTool = type;
-        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      }
-    });
-  });
 
-  const pauseBtn = document.getElementById('btn-pause');
-  pauseBtn?.addEventListener('click', () => {
-    paused = !paused;
-    const span = pauseBtn.querySelector('span');
-    if (span) span.textContent = paused ? 'PLAY' : 'PAUSE';
-  });
+// --------- 全局：悬浮球 / 隐藏顶栏状态 ---------
+let landscapeModeActive = false;
 
-  const speedBtn = document.getElementById('btn-speed');
-  const speeds = [1, 2, 3, 0.5];
-  let speedIdx = 0;
-  speedBtn?.addEventListener('click', () => {
-    speedIdx = (speedIdx + 1) % speeds.length;
-    gameSpeed = speeds[speedIdx];
-    const span = speedBtn.querySelector('span');
-    if (span) span.textContent = gameSpeed + 'X';
-  });
-
-  document.getElementById('btn-clear')?.addEventListener('click', () => {
-    const scene = gameInstance?.scene.getScene('GameScene');
-    if (scene) scene.clearAll();
-  });
-  document.getElementById('btn-clear-zombies')?.addEventListener('click', () => {
-    const scene = gameInstance?.scene.getScene('GameScene');
-    if (scene) scene.clearZombies();
-  });
-
-  // ======== 一键横屏全屏按钮 (增强版: Fullscreen -> Orientation Lock -> CSS Rotate) ========
-  let cssRotated = false;
-  function clearCssRotate() {
-    const html = document.documentElement;
-    html.classList.remove('force-landscape');
-    html.classList.remove('force-landscape-ccw');
-    cssRotated = false;
+function applyToolbarHiddenMode(hidden) {
+  const body = document.body;
+  const fab = document.getElementById('fab');
+  const fabPanel = document.getElementById('fab-panel');
+  if (hidden) {
+    body.classList.add('hide-toolbar');
+    fab?.classList.add('visible');
+  } else {
+    body.classList.remove('hide-toolbar');
+    fab?.classList.remove('visible');
+    fabPanel?.classList.remove('open');
+    fabPanel?.setAttribute('aria-hidden', 'true');
   }
-  function applyCssRotate(ccw) {
-    const html = document.documentElement;
-    clearCssRotate();
-    html.classList.add(ccw ? 'force-landscape-ccw' : 'force-landscape');
-    cssRotated = true;
-    setTimeout(() => {
-      checkOrientation();
-      triggerGameResize();
-    }, 60);
-  }
-  function exitFullscreenSafe() {
-    const exit = document.exitFullscreen || document.webkitExitFullscreen ||
-                 document.mozCancelFullScreen || document.msExitFullscreen;
-    if (exit && (document.fullscreenElement || document.webkitFullscreenElement ||
-                 document.mozFullScreenElement || document.msFullscreenElement)) {
-      return exit.call(document).catch(() => {});
+  // 通知 Phaser 重算缩放
+  setTimeout(() => triggerGameResize(), 40);
+}
+
+// --------- 同步 toolbar + fab-panel 的激活态 ---------
+function syncActiveTool(type) {
+  // 统一选中 toolbar + fab-panel 里对应的 data-type 按钮
+  document.querySelectorAll('.tool-btn, .fab-btn[data-type]').forEach(b => {
+    if (b.dataset.type) {
+      if (selectedTool === type && b.dataset.type === type) b.classList.add('active');
+      else b.classList.remove('active');
     }
-    return Promise.resolve();
+  });
+}
+
+// --------- 通用:暂停/倍速/清理,保证 toolbar 和 fab-panel 两个按钮的文本状态同步 ---------
+let currentSpeedLabel = '1X';
+function syncPauseLabel(paused) {
+  const want = paused ? 'PLAY' : 'PAUSE';
+  document.querySelectorAll('#btn-pause span, #fab-btn-pause span').forEach(s => { s.textContent = want; });
+}
+function syncSpeedLabel() {
+  document.querySelectorAll('#btn-speed span, #fab-btn-speed span').forEach(s => { s.textContent = currentSpeedLabel; });
+}
+function syncLandscapeLabel(text, finalReset) {
+  document.querySelectorAll('#btn-landscape span, #fab-btn-landscape span').forEach(s => { s.textContent = text; });
+  if (finalReset) {
+    setTimeout(() => {
+      document.querySelectorAll('#btn-landscape span, #fab-btn-landscape span').forEach(s => { s.textContent = 'LANDSCAPE'; });
+    }, 3000);
   }
+}
+function clearLandscapeLoading() {
+  document.querySelectorAll('#btn-landscape, #fab-btn-landscape').forEach(b => b.classList.remove('landscape-loading'));
+}
+function addLandscapeLoading() {
+  document.querySelectorAll('#btn-landscape, #fab-btn-landscape').forEach(b => b.classList.add('landscape-loading'));
+}
 
-  document.getElementById('btn-landscape')?.addEventListener('click', async (ev) => {
-    const btn = ev.currentTarget;
-    const span = btn.querySelector('span');
-    if (btn.classList.contains('landscape-loading')) return; // 防止重复点击
-    btn.classList.add('landscape-loading');
-    const origText = span ? span.textContent : 'LANDSCAPE';
-    if (span) span.textContent = 'LOADING';
+// --------- 横屏进入/退出 (提取公共函数, 保证点击横屏按钮优先执行 Fullscreen) ---------
+let cssRotated = false;
+function clearCssRotate() {
+  const html = document.documentElement;
+  html.classList.remove('force-landscape');
+  html.classList.remove('force-landscape-ccw');
+  cssRotated = false;
+}
+function applyCssRotate(ccw) {
+  const html = document.documentElement;
+  clearCssRotate();
+  html.classList.add(ccw ? 'force-landscape-ccw' : 'force-landscape');
+  cssRotated = true;
+  setTimeout(() => {
+    checkOrientation();
+    triggerGameResize();
+  }, 60);
+}
+function exitFullscreenSafe() {
+  const exit = document.exitFullscreen || document.webkitExitFullscreen ||
+               document.mozCancelFullScreen || document.msExitFullscreen;
+  if (exit && (document.fullscreenElement || document.webkitFullscreenElement ||
+               document.mozFullScreenElement || document.msFullscreenElement)) {
+    return exit.call(document).catch(() => {});
+  }
+  return Promise.resolve();
+}
+function isInFullscreenNow() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement ||
+            document.mozFullScreenElement || document.msFullscreenElement);
+}
 
-    try {
-      // ====== 第一步: 如果已经在横屏了，退出所有模式 ======
-      const w = window.innerWidth, h = window.innerHeight;
-      const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-                       (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-      const currentlyLandscape = w > h || cssRotated;
-      const inFs = !!(document.fullscreenElement || document.webkitFullscreenElement ||
-                      document.mozFullScreenElement || document.msFullscreenElement);
-      const sO = screen?.orientation || screen?.mozOrientation || screen?.msOrientation;
-      let orLockOk = false;
-      try { orLockOk = !!(sO && (sO.type || '').startsWith('landscape')); } catch (e) {}
+// 参数 triggerEl: 用户点击的那个 DOM 元素 (用于保留原始文本 label)
+async function toggleLandscapeMode(triggerEl) {
+  if (triggerEl?.classList.contains('landscape-loading')) return;
+  addLandscapeLoading();
+  const origLabel = 'LANDSCAPE';
 
-      if (currentlyLandscape && (inFs || cssRotated || orLockOk)) {
-        // 退出模式: 依次尝试解除
-        try { if (sO?.unlock) await sO.unlock(); } catch (e) {}
-        await exitFullscreenSafe();
-        clearCssRotate();
-        setTimeout(() => { checkOrientation(); triggerGameResize(); }, 50);
-        btn.classList.remove('landscape-loading');
-        if (span) span.textContent = origText;
-        return;
+  try {
+    const w = window.innerWidth, h = window.innerHeight;
+    const currentlyLandscape = w > h || cssRotated;
+    const inFs = isInFullscreenNow();
+    const sO = screen?.orientation || screen?.mozOrientation || screen?.msOrientation;
+    let orLockOk = false;
+    try { orLockOk = !!(sO && (sO.type || '').startsWith('landscape')); } catch (e) {}
+
+    // -------- 退出模式: 仅当我们自己的 landscapeModeActive 为 true 时才退出 --------
+    //  (不要依赖系统原生 orientation/方向锁来判断, 否则桌面浏览器本来就是横屏会误判"已经在模式中"执行退出)
+    if (landscapeModeActive) {
+      try { if (sO?.unlock) await sO.unlock(); } catch (e) {}
+      await exitFullscreenSafe();
+      clearCssRotate();
+      landscapeModeActive = false;
+      applyToolbarHiddenMode(false);
+      syncLandscapeLabel(origLabel, false);
+      setTimeout(() => { checkOrientation(); triggerGameResize(); }, 50);
+      clearLandscapeLoading();
+      return;
+    }
+
+    // -------- 进入模式 (顺序: 先全屏, 再锁方向, 再 fallback CSS 旋转) --------
+    const el = document.documentElement;
+    const reqFs = el.requestFullscreen || el.webkitRequestFullscreen ||
+                  el.mozRequestFullScreen || el.msRequestFullscreen;
+    let wentFs = false;
+
+    // 优先执行 Fullscreen (必须在用户手势内立即调用)
+    if (reqFs && !inFs) {
+      try { await reqFs.call(el); wentFs = true; }
+      catch (e) { /* 忽略,继续尝试锁方向 */ }
+    }
+    await new Promise(r => setTimeout(r, 80));
+
+    // 锁横屏方向
+    let locked = false;
+    if (sO) {
+      const lock = sO.lock || sO.lockOrientation;
+      if (lock) {
+        const candidates = ['landscape-primary', 'landscape-secondary', 'landscape'];
+        for (let i = 0; i < candidates.length && !locked; i++) {
+          try {
+            const res = await lock.call(sO, candidates[i]);
+            if (res !== false) locked = true;
+          } catch (e) { /* 继续尝试下一个 */ }
+        }
+        if (!locked && sO.lockOrientation) {
+          try { locked = !!sO.lockOrientation('landscape'); } catch (e) {}
+        }
       }
+    }
+    await new Promise(r => setTimeout(r, 50));
 
-      // ====== 第二步: 请求全屏 (必须在用户手势内调用) ======
-      const el = document.documentElement;
-      const reqFs = el.requestFullscreen || el.webkitRequestFullscreen ||
-                    el.mozRequestFullScreen || el.msRequestFullscreen;
-      let wentFs = false;
-      if (reqFs && !inFs) {
-        try { await reqFs.call(el); wentFs = true; }
-        catch (e) { /* 某些浏览器需要用户手势更严格,忽略继续 */ }
-      }
-      // 部分浏览器 requestFullscreen 是异步但需要等待下一帧才真正生效
-      await new Promise(r => setTimeout(r, 80));
-
-      // ====== 第三步: 尝试锁定横屏方向 ======
-      let locked = false;
+    // 若方向锁失败, 再重试一次全屏(某些浏览器必须先全屏再锁)
+    if (!locked && !wentFs && reqFs) {
+      try { await reqFs.call(el); wentFs = true; } catch (e) {}
+      await new Promise(r => setTimeout(r, 120));
       if (sO) {
         const lock = sO.lock || sO.lockOrientation;
         if (lock) {
-          const candidates = ['landscape-primary', 'landscape-secondary', 'landscape'];
-          for (let i = 0; i < candidates.length && !locked; i++) {
-            try {
-              const res = await lock.call(sO, candidates[i]);
-              if (res !== false) locked = true;
-            } catch (e) { /* 继续尝试下一个 */ }
-          }
-          // 部分老浏览器是同步返回 boolean
-          if (!locked && sO.lockOrientation) {
-            try { locked = !!sO.lockOrientation('landscape'); } catch (e) {}
-          }
+          try {
+            const res = await lock.call(sO, 'landscape');
+            if (res !== false) locked = true;
+          } catch (e) {}
         }
       }
-      await new Promise(r => setTimeout(r, 50));
-
-      // ====== 第四步: 如果方向锁失败,尝试重试全屏(某些浏览器先全屏再锁才有效) ======
-      if (!locked && !wentFs && reqFs) {
-        try { await reqFs.call(el); wentFs = true; } catch (e) {}
-        await new Promise(r => setTimeout(r, 120));
-        if (sO) {
-          const lock = sO.lock || sO.lockOrientation;
-          if (lock) {
-            try {
-              const res = await lock.call(sO, 'landscape');
-              if (res !== false) locked = true;
-            } catch (e) {}
-          }
-        }
-      }
-
-      // ====== 第五步: 终极 fallback - CSS 强制旋转 (iOS Safari / 老浏览器) ======
-      if (!locked) {
-        const w2 = window.innerWidth, h2 = window.innerHeight;
-        if (h2 > w2) {
-          // 判断优先方向: 默认顺时针旋转90°
-          // 某些设备/场景逆时针更优（如iOS Safari带地址栏）
-          const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-                        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-          applyCssRotate(false /* 顺时针默认 */);
-          // 150ms后检查旋转结果，如果尺寸还是不对尝试反向
-          setTimeout(() => {
-            const body = document.body;
-            if (!body) return;
-            const rect = body.getBoundingClientRect();
-            // 如果旋转后 body 的可视区域宽高比异常，尝试反向
-            if (rect.width < 0 || isIOS) {
-              // 某些iOS Safari需要反向
-            }
-            triggerGameResize();
-          }, 200);
-        }
-      }
-
-      // ====== 提示反馈 ======
-      let mode = '';
-      if (locked && wentFs) mode = 'FULL+ORIENT';
-      else if (locked) mode = 'ORIENT LOCK';
-      else if (wentFs) mode = 'FULLSCREEN';
-      else if (cssRotated) mode = 'ROTATE';
-
-      if (!mode) {
-        const tip = document.getElementById('asset-hint');
-        if (tip) {
-          const orig = tip.innerHTML;
-          tip.innerHTML = '<strong style="color:#ef4444">TIP</strong> &mdash; 请手动旋转手机横屏；iOS用户请「添加到主屏幕」后以PWA方式打开，支持全屏横屏。';
-          setTimeout(() => { tip.innerHTML = orig; }, 5000);
-        }
-      }
-      if (span) span.textContent = mode || origText;
-      setTimeout(() => {
-        btn.classList.remove('landscape-loading');
-        if (span && !mode) span.textContent = origText;
-        else if (span && mode) span.textContent = mode;
-      }, 900);
-      setTimeout(() => {
-        if (span) span.textContent = origText;
-      }, 3000);
-
-    } catch (err) {
-      console.warn('Landscape error:', err);
-      btn.classList.remove('landscape-loading');
-      if (span) span.textContent = origText;
     }
+
+    // 终极 fallback: CSS 强制旋转 (iOS Safari)
+    if (!locked) {
+      const w2 = window.innerWidth, h2 = window.innerHeight;
+      if (h2 > w2) {
+        applyCssRotate(false);
+        setTimeout(() => triggerGameResize(), 200);
+      }
+    }
+
+    // 用户明确点击了「横屏全屏」按钮:
+    //   无论 Fullscreen API / Orientation Lock 是否成功, 都视为用户请求"沉浸式模式"
+    //   → 立即隐藏顶栏, 显示悬浮球, 扩大游戏可视区域
+    landscapeModeActive = true;
+    applyToolbarHiddenMode(true);
+
+    // 反馈 label (同时标注进入了哪个等级的成功)
+    let mode = '';
+    if (locked && wentFs) mode = 'FULL+ORIENT';
+    else if (locked) mode = 'ORIENT LOCK';
+    else if (wentFs) mode = 'FULLSCREEN';
+    else if (cssRotated) mode = 'ROTATE';
+    else mode = 'LANDSCAPE'; // 最基本: 隐藏了顶栏,进入沉浸式
+
+    syncLandscapeLabel(mode, true);
+    setTimeout(() => {
+      clearLandscapeLoading();
+    }, 900);
+
+  } catch (err) {
+    console.warn('Landscape error:', err);
+    clearLandscapeLoading();
+    syncLandscapeLabel(origLabel, false);
+  }
+}
+
+function setupToolbar() {
+  // -------- 类型选择按钮: 同时处理 toolbar 和 fab-panel --------
+  function bindToolButton(btn) {
+    btn.addEventListener('click', () => {
+      const type = btn.dataset.type;
+      if (!type) return;
+      if (selectedTool === type) {
+        selectedTool = null;
+      } else {
+        selectedTool = type;
+      }
+      syncActiveTool(selectedTool);
+    });
+  }
+  document.querySelectorAll('.tool-btn').forEach(bindToolButton);
+  document.querySelectorAll('.fab-btn[data-type]').forEach(bindToolButton);
+
+  // -------- 暂停 / 倍速 / 清理 (两处按钮都绑定, 共享状态) --------
+  function togglePause() {
+    paused = !paused;
+    syncPauseLabel(paused);
+  }
+  document.getElementById('btn-pause')?.addEventListener('click', togglePause);
+  document.getElementById('fab-btn-pause')?.addEventListener('click', togglePause);
+
+  const speeds = [1, 2, 3, 0.5];
+  let speedIdx = 0;
+  function toggleSpeed() {
+    speedIdx = (speedIdx + 1) % speeds.length;
+    gameSpeed = speeds[speedIdx];
+    currentSpeedLabel = gameSpeed + 'X';
+    syncSpeedLabel();
+  }
+  document.getElementById('btn-speed')?.addEventListener('click', toggleSpeed);
+  document.getElementById('fab-btn-speed')?.addEventListener('click', toggleSpeed);
+
+  function doClearAll() {
+    const scene = gameInstance?.scene.getScene('GameScene');
+    if (scene) scene.clearAll();
+  }
+  document.getElementById('btn-clear')?.addEventListener('click', doClearAll);
+  document.getElementById('fab-btn-clear')?.addEventListener('click', doClearAll);
+
+  function doPurge() {
+    const scene = gameInstance?.scene.getScene('GameScene');
+    if (scene) scene.clearZombies();
+  }
+  document.getElementById('btn-clear-zombies')?.addEventListener('click', doPurge);
+  document.getElementById('fab-btn-clear-zombies')?.addEventListener('click', doPurge);
+
+  // -------- 横屏按钮 (两处都绑定到同一个 toggleLandscapeMode) --------
+  const landscapeHandler = (ev) => toggleLandscapeMode(ev.currentTarget);
+  document.getElementById('btn-landscape')?.addEventListener('click', landscapeHandler);
+  document.getElementById('fab-btn-landscape')?.addEventListener('click', landscapeHandler);
+
+  // -------- 悬浮球展开 / 收起面板 --------
+  const fab = document.getElementById('fab');
+  const fabPanel = document.getElementById('fab-panel');
+  const fabClose = document.getElementById('fab-panel-close');
+
+  function openFabPanel() {
+    fabPanel?.classList.add('open');
+    fabPanel?.setAttribute('aria-hidden', 'false');
+  }
+  function closeFabPanel() {
+    fabPanel?.classList.remove('open');
+    fabPanel?.setAttribute('aria-hidden', 'true');
+  }
+  fab?.addEventListener('click', () => {
+    if (!fabPanel) return;
+    if (fabPanel.classList.contains('open')) closeFabPanel();
+    else openFabPanel();
+  });
+  fabClose?.addEventListener('click', closeFabPanel);
+  // 点击面板外部(不包含悬浮球区域)关闭面板
+  document.addEventListener('click', (e) => {
+    if (!fabPanel?.classList.contains('open')) return;
+    const t = e.target;
+    if (fabPanel.contains(t) || fab?.contains(t)) return;
+    closeFabPanel();
   });
 
-  // 监听全屏退出，同步清理CSS旋转
+  // -------- 监听全屏退出: 如果用户手动退出全屏也清理 --------
   ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'].forEach(evName => {
     document.addEventListener(evName, () => {
-      const inFs = !!(document.fullscreenElement || document.webkitFullscreenElement ||
-                      document.mozFullScreenElement || document.msFullscreenElement);
-      if (!inFs && cssRotated) {
-        // 用户手动退出全屏，也保留CSS旋转（因为用户需要横屏）
+      const inFs = isInFullscreenNow();
+      if (!inFs && landscapeModeActive && !cssRotated) {
+        // 用户手动退出全屏 且没有CSS旋转 → 认为要退出横屏模式,恢复顶栏
+        // (保留 orientation lock, 因为有些设备锁方向还在)
+        landscapeModeActive = false;
+        applyToolbarHiddenMode(false);
       }
       setTimeout(() => { checkOrientation(); triggerGameResize(); }, 100);
     });
@@ -1114,16 +1194,24 @@ function setupToolbar() {
   window.addEventListener('keydown', (e) => {
     const keyMap = { '1': 'survivor_male', '2': 'survivor_female', '3': 'zombie_normal', '4': 'zombie_fast', '5': 'zombie_tank' };
     if (keyMap[e.key]) {
-      const btn = document.querySelector(`.tool-btn[data-type="${keyMap[e.key]}"]`);
-      if (btn) btn.click();
+      selectedTool = keyMap[e.key];
+      syncActiveTool(selectedTool);
     } else if (e.code === 'Space') {
       e.preventDefault();
-      pauseBtn?.click();
+      togglePause();
     } else if (e.key === 'Escape') {
       selectedTool = null;
-      document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+      syncActiveTool(null);
+      closeFabPanel();
     }
   });
+
+  // 桌面端: 初始也显示悬浮球(方便用户始终有小入口)
+  const isMobileUA = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+                     (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  if (!isMobileUA) {
+    fab?.classList.add('visible');
+  }
 }
 
 // ============================================================

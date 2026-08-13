@@ -15,6 +15,8 @@ const PALETTE = {
 };
 
 // ---------- 角色配置 ----------
+// aabbPxSrc: 角色在 sprite frame 内的真实像素 AABB (left/top/right/bottom)
+// padX/padY: 每侧外扩/内收缩像素 (世界坐标 px, 负=碰撞箱比角色小; 正=比角色大)
 const ENTITY_CONFIG = {
   survivor_male: {
     name: 'MALE', category: 'survivor',
@@ -23,13 +25,9 @@ const ENTITY_CONFIG = {
     detectRange: 360, fleeRange: 150, aggression: 0.4,
     jumpPower: 520, weight: 1,
     color: PALETTE.green, accentColor: PALETTE.greenDark, skinColor: PALETTE.skin,
-    // ===== 真实 sprite (每帧 100x100, Bottom Align: 人物 Y=80-99, 实际身体≈20px高) =====
     frameW: 100, frameH: 100,
-    displayH: 400,  // 把 20px 的 tiny 身体放大: scale=4.0 → 身体显示 80px 高
-    // ===== 按像素实测 AABB (原图 100×100 内人物实际轮廓, 脚贴 frame 底边): =====
-    //   with Bottom Align 版: L=42, T=78, R=58, B=99  (人高 22px; 含头, scale后身体显示88px)
-    //   武器挥动会出左右, 增加 marginW; 头顶加少量 marginH 给帽子
-    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.45, marginH: 1.02 },
+    displayH: 400,  // scale=4.0
+    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, padX: -4, padY: -4 },
     assetDir: 'assets/sprites/survivor_male',
     frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6, Transform: 10 },
     size: 36
@@ -42,8 +40,8 @@ const ENTITY_CONFIG = {
     jumpPower: 560, weight: 0.9,
     color: '#f472b6', accentColor: PALETTE.greenDarker, skinColor: PALETTE.skin,
     frameW: 100, frameH: 100,
-    displayH: 380,  // scale 3.8, 身体显示≈76px高
-    aabbPxSrc: { left: 42, top: 79, right: 58, bottom: 99, marginW: 1.4, marginH: 1.02 },
+    displayH: 380,
+    aabbPxSrc: { left: 42, top: 79, right: 58, bottom: 99, padX: -4, padY: -4 },
     assetDir: 'assets/sprites/survivor_female',
     frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6, Transform: 10 },
     size: 34
@@ -57,7 +55,7 @@ const ENTITY_CONFIG = {
     color: PALETTE.red, accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
     frameW: 100, frameH: 100,
     displayH: 390,
-    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.4, marginH: 1.02 },
+    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, padX: -4, padY: -4 },
     assetDir: 'assets/sprites/zombie_normal',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 35
@@ -71,7 +69,7 @@ const ENTITY_CONFIG = {
     color: '#f59e0b', accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
     frameW: 100, frameH: 100,
     displayH: 370,
-    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.35, marginH: 1.02 },
+    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, padX: -4, padY: -4 },
     assetDir: 'assets/sprites/zombie_fast',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 33
@@ -83,10 +81,9 @@ const ENTITY_CONFIG = {
     detectRange: 360,
     jumpPower: 400, weight: 1.8,
     color: PALETTE.red, accentColor: PALETTE.redDarker, skinColor: PALETTE.skinZ,
-    // TANK: ZMeleeV1 ×1.5 放大, 每帧 150x150
     frameW: 150, frameH: 150,
-    displayH: 560,  // scale = 560/150 ≈ 3.73 → 身体 30px 高 × 3.73 ≈ 112px
-    aabbPxSrc: { left: 63, top: 117, right: 87, bottom: 149, marginW: 1.6, marginH: 1.02 },
+    displayH: 560,
+    aabbPxSrc: { left: 63, top: 117, right: 87, bottom: 149, padX: -6, padY: -6 },
     assetDir: 'assets/sprites/zombie_tank',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 52
@@ -1139,30 +1136,29 @@ class GameScene extends Phaser.Scene {
     ent.sprite.setScale(scale);
     ent.sprite.setOrigin(0.5, 1.0);  // 脚底对齐
 
-    // ====== AABB 碰撞盒 ======
-    // 1) bodyW / bodyH: 基于像素级 AABB × scale × margin (视觉贴合的物理尺寸)
-    //    注意: Phaser Arcade Body.setSize(w, h) 会自动再乘 sprite.scale
-    //    所以我们需要用 bodyW÷scale 作为 setSize 的参数!
+    // ====== AABB 碰撞盒 (严格贴合人物视觉 AABB, 不再对齐 frame 中心) ======
+    //   px = 角色在 frame 内的像素 AABB (左/顶/右/底)
+    //   padX/padY = 每侧像素外扩/内收缩 (负=碰撞箱比角色视觉小; 正=比角色视觉大)
+    //   body 左上角 (显示矩形坐标) = (L*scale - padX, T*scale - padY)
+    //   body 宽/高 = (R-L+1)*scale + 2*padX, (B-T+1)*scale + 2*padY
     const px = cfg.aabbPxSrc;
-    let bodyW = Math.max(8, Math.round((px.right - px.left + 1) * scale * px.marginW));
-    let bodyH = Math.max(12, Math.round((px.bottom - px.top + 1) * scale * px.marginH));
+    const pxW = (px.right - px.left + 1) * scale;
+    const pxH = (px.bottom - px.top + 1) * scale;
+    const padX = px.padX ?? 0;
+    const padY = px.padY ?? 0;
+    let bodyW = Math.max(6, Math.round(pxW + 2 * padX));
+    let bodyH = Math.max(8, Math.round(pxH + 2 * padY));
     ent.bodyW = bodyW; ent.bodyH = bodyH;
 
-    // 2) setSize(w / scale, h / scale, center=false):
-    //    Phaser 会把传入值 * sprite.scale 作为最终 body 尺寸.
-    //    所以我们先除以 scale, 让乘完之后正好等于 bodyW × bodyH.
+    // Phaser Arcade: setSize/setOffset 会自动再乘 sprite.scale → 传参数要先除 scale
     ent.sprite.body.setSize(bodyW / scale, bodyH / scale, false);
 
-    // 3) setOffset(x / scale, y / scale): Phaser 也会把 offset * sprite.scale.
-    //    我们想要的 world 坐标 offX/offY:
-    //      offX = (dW - bodyW) / 2  (水平居中)
-    //      offY = dH - bodyH        (底部对齐: bodyBottom = sprite底)
-    const dW = ent.sprite.displayWidth;   // = frameW * scale (已缩放后显示宽)
-    const dH = ent.sprite.displayHeight;  // = frameH * scale
-    const offX = Math.round((dW - bodyW) / 2);
-    const offY = Math.max(0, dH - bodyH);
-    // 但 Phaser offset 会自动 * scale → 先除 scale 再传:
-    ent.sprite.body.setOffset(offX / scale, offY / scale);
+    // offX/offY (world px): body 左上相对 显示矩形左上
+    //   想让 body 左上 x = px.left*scale - padX
+    //   想让 body 左上 y = px.top *scale - padY
+    const offX_world = px.left * scale - padX;
+    const offY_world = px.top * scale - padY;
+    ent.sprite.body.setOffset(offX_world / scale, offY_world / scale);
     ent.sprite.body.mass = cfg.weight;
 
     ent.type = type; ent.cfg = cfg;
@@ -1176,10 +1172,8 @@ class GameScene extends Phaser.Scene {
     ent._attackAnimUntil = 0; // 攻击动画播放完之前不切回 walk/idle
     ent._hurtAnimUntil = 0;
 
-    // 血条 & 名称 — 位置要基于"视觉头顶"而非 display 矩形顶
-    //   视觉头顶 ≈ sprite 脚底 y - bodyH (因为 body 底部对齐脚底)
-    //   再多给 10px 间隙，避免血条贴在人物头发上
-    const visualTopY = y - bodyH;
+    // 血条 & 名称 — 位置基于人物"视觉头顶" (frameH - top)*scale 往上
+    const visualTopY = y - scale * (cfg.frameH - px.top);
     const hpBarY = visualTopY - 10;
     const nameY  = visualTopY - 22;
     ent.hpBarBg = this.add.image(x, hpBarY, 'hpBarBg').setDepth(20);
@@ -1667,8 +1661,10 @@ class GameScene extends Phaser.Scene {
   updateEntityVisuals(ent, now) {
     if (ent.isDead) return;
     const cfg = ent.cfg;
-    // ===== 血条/名称位置: 放在视觉头顶 (body 顶部上方) =====
-    const visualTopY = ent.sprite.y - (ent.bodyH || (cfg.displayH * 0.22));
+    const px = cfg.aabbPxSrc;
+    const scale = cfg.displayH / cfg.frameH;
+    // 视觉头顶 Y (世界坐标): sprite.y - scale*(frameH - px.top)
+    const visualTopY = ent.sprite.y - scale * (cfg.frameH - px.top);
     const bx = ent.sprite.x;
     const by = visualTopY - 10;
     ent.hpBarBg.setPosition(bx, by);

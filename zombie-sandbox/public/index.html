@@ -368,6 +368,8 @@
         font-size: 8px; max-width: 260px;
         padding: 6px 8px; left: 6px; bottom: 6px;
       }
+      /* 手机端不使用悬浮球 + 悬浮球面板（始终显示顶部 toolbar） */
+      #fab, #fab-panel { display: none !important; }
     }
     /* 小屏手机:标题隐藏,图标-only按钮 */
     @media (max-width: 560px) {

@@ -1457,8 +1457,17 @@ class GameScene extends Phaser.Scene {
 
 // --------- 全局：悬浮球 / 隐藏顶栏状态 ---------
 let landscapeModeActive = false;
+// 手机端(窄屏或触摸 coarse)：禁用悬浮球, 始终保留顶部 toolbar, 不切 hide-toolbar 模式
+function _isMobileNoFab() {
+  if (typeof window === 'undefined') return false;
+  const w = window.innerWidth;
+  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  return w <= 768 || !!coarse;
+}
 
 function applyToolbarHiddenMode(hidden) {
+  // 手机端用户明确不要悬浮球: 始终显示顶部 toolbar, 任何情况下都不 hide
+  if (_isMobileNoFab()) hidden = false;
   const body = document.body;
   const fab = document.getElementById('fab');
   const fabPanel = document.getElementById('fab-panel');

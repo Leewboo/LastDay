@@ -29,7 +29,7 @@ const ENTITY_CONFIG = {
     // ===== 按像素实测 AABB (原图 100×100 内人物实际轮廓, 脚贴 frame 底边): =====
     //   with Bottom Align 版: L=42, T=78, R=58, B=99  (人高 22px; 含头, scale后身体显示88px)
     //   武器挥动会出左右, 增加 marginW; 头顶加少量 marginH 给帽子
-    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 2.0, marginH: 1.02 },
+    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.45, marginH: 1.02 },
     assetDir: 'assets/sprites/survivor_male',
     frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6, Transform: 10 },
     size: 36
@@ -43,7 +43,7 @@ const ENTITY_CONFIG = {
     color: '#f472b6', accentColor: PALETTE.greenDarker, skinColor: PALETTE.skin,
     frameW: 100, frameH: 100,
     displayH: 380,  // scale 3.8, 身体显示≈76px高
-    aabbPxSrc: { left: 42, top: 79, right: 58, bottom: 99, marginW: 1.9, marginH: 1.02 },
+    aabbPxSrc: { left: 42, top: 79, right: 58, bottom: 99, marginW: 1.4, marginH: 1.02 },
     assetDir: 'assets/sprites/survivor_female',
     frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6, Transform: 10 },
     size: 34
@@ -57,7 +57,7 @@ const ENTITY_CONFIG = {
     color: PALETTE.red, accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
     frameW: 100, frameH: 100,
     displayH: 390,
-    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.9, marginH: 1.02 },
+    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.4, marginH: 1.02 },
     assetDir: 'assets/sprites/zombie_normal',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 35
@@ -71,7 +71,7 @@ const ENTITY_CONFIG = {
     color: '#f59e0b', accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
     frameW: 100, frameH: 100,
     displayH: 370,
-    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.8, marginH: 1.02 },
+    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.35, marginH: 1.02 },
     assetDir: 'assets/sprites/zombie_fast',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 33
@@ -86,7 +86,7 @@ const ENTITY_CONFIG = {
     // TANK: ZMeleeV1 ×1.5 放大, 每帧 150x150
     frameW: 150, frameH: 150,
     displayH: 560,  // scale = 560/150 ≈ 3.73 → 身体 30px 高 × 3.73 ≈ 112px
-    aabbPxSrc: { left: 63, top: 117, right: 87, bottom: 149, marginW: 2.0, marginH: 1.02 },
+    aabbPxSrc: { left: 63, top: 117, right: 87, bottom: 149, marginW: 1.6, marginH: 1.02 },
     assetDir: 'assets/sprites/zombie_tank',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 52

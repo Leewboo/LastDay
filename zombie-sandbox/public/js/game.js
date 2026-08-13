@@ -18,78 +18,77 @@ const PALETTE = {
 const ENTITY_CONFIG = {
   survivor_male: {
     name: 'MALE', category: 'survivor',
-    hp: 100, maxHp: 100, speed: 110, damage: 15,
-    attackRange: 46, attackCooldown: 800,
-    detectRange: 260, fleeRange: 100, aggression: 0.4,
-    jumpPower: 460, weight: 1,
+    hp: 100, maxHp: 100, speed: 125, damage: 18,
+    attackRange: 68, attackCooldown: 800,
+    detectRange: 360, fleeRange: 150, aggression: 0.4,
+    jumpPower: 520, weight: 1,
     color: PALETTE.green, accentColor: PALETTE.greenDark, skinColor: PALETTE.skin,
     // ===== 真实 sprite (每帧 100x100, 底部对齐) =====
     frameW: 100, frameH: 100,
-    // 显示高度
-    displayH: 64,
-    // 物理 AABB 盒 (贴合人物身体,脚在底部)
-    bodyW: 38, bodyH: 56, bodyOffsetY: 8,
+    // 显示高度 (放大 1.7x, 视觉更有存在感)
+    displayH: 108,
+    // 物理 AABB 盒 (缩小到真实人体轮廓 ≈ 身体宽高比 ~ 1:2.5, 脚底贴地面)
+    bodyW: 22, bodyH: 58, bodyOffsetY: 0,
     assetDir: 'assets/sprites/survivor_male',
-    // 每动作帧数
     frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6 },
-    // 兼容旧代码 cfg.size: (displayH * 0.33 ≈ 原 placeholder 尺寸数量级, 用于 UI 偏移)
-    size: 22
+    // 兼容旧代码 cfg.size: 与 displayH 同比例, 用于平台判定/UI/预览口径一致
+    size: 36
   },
   survivor_female: {
     name: 'FEMALE', category: 'survivor',
-    hp: 85, maxHp: 85, speed: 125, damage: 11,
-    attackRange: 42, attackCooldown: 700,
-    detectRange: 300, fleeRange: 130, aggression: 0.25,
-    jumpPower: 500, weight: 0.9,
+    hp: 85, maxHp: 85, speed: 140, damage: 14,
+    attackRange: 62, attackCooldown: 700,
+    detectRange: 400, fleeRange: 170, aggression: 0.25,
+    jumpPower: 560, weight: 0.9,
     color: '#f472b6', accentColor: PALETTE.greenDarker, skinColor: PALETTE.skin,
     frameW: 100, frameH: 100,
-    displayH: 62,
-    bodyW: 36, bodyH: 54, bodyOffsetY: 8,
+    displayH: 104,
+    bodyW: 20, bodyH: 54, bodyOffsetY: 0,
     assetDir: 'assets/sprites/survivor_female',
     frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6 },
-    size: 21
+    size: 34
   },
   zombie_normal: {
     name: 'NORMAL', category: 'zombie',
-    hp: 110, maxHp: 110, speed: 55, damage: 14,
-    attackRange: 40, attackCooldown: 1000,
-    detectRange: 320,
-    jumpPower: 400, weight: 1.1,
+    hp: 130, maxHp: 130, speed: 62, damage: 18,
+    attackRange: 58, attackCooldown: 1000,
+    detectRange: 400,
+    jumpPower: 460, weight: 1.1,
     color: PALETTE.red, accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
     frameW: 100, frameH: 100,
-    displayH: 64,
-    bodyW: 38, bodyH: 56, bodyOffsetY: 8,
+    displayH: 106,
+    bodyW: 22, bodyH: 58, bodyOffsetY: 0,
     assetDir: 'assets/sprites/zombie_normal',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6 },
-    size: 22
+    size: 35
   },
   zombie_fast: {
     name: 'FAST', category: 'zombie',
-    hp: 60, maxHp: 60, speed: 150, damage: 8,
-    attackRange: 36, attackCooldown: 550,
-    detectRange: 360,
-    jumpPower: 520, weight: 0.8,
+    hp: 70, maxHp: 70, speed: 170, damage: 10,
+    attackRange: 52, attackCooldown: 550,
+    detectRange: 440,
+    jumpPower: 600, weight: 0.8,
     color: '#f59e0b', accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
     frameW: 100, frameH: 100,
-    displayH: 60,
-    bodyW: 34, bodyH: 54, bodyOffsetY: 8,
+    displayH: 100,
+    bodyW: 19, bodyH: 52, bodyOffsetY: 0,
     assetDir: 'assets/sprites/zombie_fast',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6 },
-    size: 20
+    size: 33
   },
   zombie_tank: {
     name: 'TANK', category: 'zombie',
-    hp: 360, maxHp: 360, speed: 35, damage: 32,
-    attackRange: 48, attackCooldown: 1400,
-    detectRange: 280,
-    jumpPower: 320, weight: 1.8,
+    hp: 420, maxHp: 420, speed: 40, damage: 40,
+    attackRange: 76, attackCooldown: 1400,
+    detectRange: 360,
+    jumpPower: 400, weight: 1.8,
     color: PALETTE.red, accentColor: PALETTE.redDarker, skinColor: PALETTE.skinZ,
     frameW: 100, frameH: 100,
-    displayH: 90,
-    bodyW: 54, bodyH: 78, bodyOffsetY: 12,
+    displayH: 156,
+    bodyW: 38, bodyH: 92, bodyOffsetY: 0,
     assetDir: 'assets/sprites/zombie_tank',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6 },
-    size: 30
+    size: 52
   }
 };
 
@@ -1083,18 +1082,35 @@ class GameScene extends Phaser.Scene {
     this.input.on('pointermove', (pointer) => {
       const cam = this.cameras.main;
       if (!this.placementPreview) {
-        this.placementPreview = this.add.image(0, 0, 'survivor_male').setAlpha(0.5).setDepth(999);
+        // 用真实 Idle 精灵第 0 帧作为预览, 脚底对齐 + 缩放一致
+        const dummyCfg = ENTITY_CONFIG['survivor_male'];
+        this.placementPreview = this.add.image(0, 0, 'survivor_male_Idle', 0)
+          .setAlpha(0.5).setDepth(999)
+          .setOrigin(0.5, 1.0)
+          .setScale(dummyCfg.displayH / dummyCfg.frameH);
         this.placementPreviewLine = this.add.arc(0, 0, 0).setStrokeStyle(1, PALETTE.text, 0.15).setDepth(998);
+        this._prevType = null;
       }
       if (selectedTool && !isPointerInHtmlUI(pointer)) {
         const worldPt = cam.getWorldPoint(pointer.x, pointer.y);
         const groundTopY = WORLD_H - this.groundHeight;
         const cfg = ENTITY_CONFIG[selectedTool];
-        const prevY = Phaser.Math.Clamp(worldPt.y, cfg.size * 2, groundTopY - cfg.size * 0.6);
-        const prevX = Phaser.Math.Clamp(worldPt.x, cfg.size, WORLD_W - cfg.size);
+        // 预览点 y 是脚底位置, 所以最低只能是 cfg.bodyH(脚底到头顶至少能看到身体), 最高 groundTopY - 1(脚站地面上)
+        const minY = Math.max(cfg.bodyH + 10, cfg.displayH * 0.7);
+        const prevY = Phaser.Math.Clamp(worldPt.y, minY, groundTopY - 1);
+        const prevX = Phaser.Math.Clamp(worldPt.x, cfg.displayH * 0.5, WORLD_W - cfg.displayH * 0.5);
+        // 切工具类型时同步改预览贴图 + 缩放 + origin
+        if (this._prevType !== selectedTool) {
+          this._prevType = selectedTool;
+          const sheetKey = `${selectedTool}_Idle`;
+          if (this.textures.exists(sheetKey)) {
+            this.placementPreview.setTexture(sheetKey, 0);
+            const c = ENTITY_CONFIG[selectedTool];
+            this.placementPreview.setScale(c.displayH / c.frameH);
+          }
+        }
         this.placementPreview.setVisible(true);
         this.placementPreview.setPosition(prevX, prevY);
-        this.placementPreview.setTexture(selectedTool);
         this.placementPreviewLine.setVisible(true);
         this.placementPreviewLine.setPosition(prevX, prevY);
         this.placementPreviewLine.setRadius(cfg.detectRange);

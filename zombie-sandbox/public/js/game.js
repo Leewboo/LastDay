@@ -26,10 +26,12 @@ const ENTITY_CONFIG = {
     // ===== 真实 sprite (每帧 100x100, 底部对齐) =====
     frameW: 100, frameH: 100,
     displayH: 108,
-    // 物理 AABB 盒 (贴合人物真实轮廓 ≈ 身体宽高比 ~ 1:2.6, 脚底贴地面)
-    bodyW: 22, bodyH: 58, bodyOffsetY: 0,
+    // ===== 按像素实测 AABB (原图 100×100 内人物实际轮廓, 脚贴 frame 底边): =====
+    //   AABB(左/顶/右/底原图px) = L=42, T=78, R=58, B=99  (宽=17, 高=22)
+    //   bodyMarginW(左右余量系数): 1.6 (给肩膀/武器摆动留空间, 避免 walk 时穿)
+    //   bodyMarginH(上下余量系数): 1.1 (头顶留一点空间)
+    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.6, marginH: 1.1 },
     assetDir: 'assets/sprites/survivor_male',
-    // 每动作帧数: with Bottom Align (无阴影), 帧高100, 宽度= n*100
     frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6, Transform: 10 },
     size: 36
   },
@@ -42,7 +44,8 @@ const ENTITY_CONFIG = {
     color: '#f472b6', accentColor: PALETTE.greenDarker, skinColor: PALETTE.skin,
     frameW: 100, frameH: 100,
     displayH: 104,
-    bodyW: 20, bodyH: 54, bodyOffsetY: 0,
+    // 实测: L=42 T=79 R=58 B=99 (宽=17 高=21)
+    aabbPxSrc: { left: 42, top: 79, right: 58, bottom: 99, marginW: 1.55, marginH: 1.1 },
     assetDir: 'assets/sprites/survivor_female',
     frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6, Transform: 10 },
     size: 34
@@ -56,9 +59,9 @@ const ENTITY_CONFIG = {
     color: PALETTE.red, accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
     frameW: 100, frameH: 100,
     displayH: 106,
-    bodyW: 22, bodyH: 58, bodyOffsetY: 0,
+    // 实测: L=42 T=78 R=58 B=99 (宽=17 高=22)
+    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.5, marginH: 1.1 },
     assetDir: 'assets/sprites/zombie_normal',
-    // 僵尸只有一套 Attack (ZMeleeV1-Attack.png → Attack1, 无 Attack2), 两套 Death(Death=Death1, Death2=备用)
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 35
   },
@@ -71,7 +74,8 @@ const ENTITY_CONFIG = {
     color: '#f59e0b', accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
     frameW: 100, frameH: 100,
     displayH: 100,
-    bodyW: 19, bodyH: 52, bodyOffsetY: 0,
+    // 实测: L=42 T=78 R=58 B=99 (宽=17 高=22)
+    aabbPxSrc: { left: 42, top: 78, right: 58, bottom: 99, marginW: 1.45, marginH: 1.1 },
     assetDir: 'assets/sprites/zombie_fast',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 33
@@ -83,10 +87,10 @@ const ENTITY_CONFIG = {
     detectRange: 360,
     jumpPower: 400, weight: 1.8,
     color: PALETTE.red, accentColor: PALETTE.redDarker, skinColor: PALETTE.skinZ,
-    // TANK 是 ZMeleeV1 × 1.5 放大, 每帧 150x150
+    // TANK: ZMeleeV1 ×1.5 放大, 每帧 150x150 (人物原 AABB(42,78,58,99)×1.5 → 63,117,87,148.5)
     frameW: 150, frameH: 150,
     displayH: 156,
-    bodyW: 38, bodyH: 92, bodyOffsetY: 0,
+    aabbPxSrc: { left: 63, top: 117, right: 87, bottom: 149, marginW: 1.7, marginH: 1.12 },
     assetDir: 'assets/sprites/zombie_tank',
     frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 52
@@ -1098,8 +1102,8 @@ class GameScene extends Phaser.Scene {
         const worldPt = cam.getWorldPoint(pointer.x, pointer.y);
         const groundTopY = WORLD_H - this.groundHeight;
         const cfg = ENTITY_CONFIG[selectedTool];
-        // 预览点 y 是脚底位置, 所以最低只能是 cfg.bodyH(脚底到头顶至少能看到身体), 最高 groundTopY - 1(脚站地面上)
-        const minY = Math.max(cfg.bodyH + 10, cfg.displayH * 0.7);
+        // 预览点 y 是脚底位置, 夹在地面上方和世界上方
+        const minY = Math.max(cfg.displayH * 0.7 + 10, 30);
         const prevY = Phaser.Math.Clamp(worldPt.y, minY, groundTopY - 1);
         const prevX = Phaser.Math.Clamp(worldPt.x, cfg.displayH * 0.5, WORLD_W - cfg.displayH * 0.5);
         // 切工具类型时同步改预览贴图 + 缩放 + origin
@@ -1128,28 +1132,51 @@ class GameScene extends Phaser.Scene {
   spawnEntity(type, x, y) {
     const cfg = ENTITY_CONFIG[type];
     const ent = {};
-    // ====== 用 spritesheet 的第一帧作为 sprite 初始显示 (texture = type_Walking 或 type_Idle 都可以) ======
+    // ====== 用 spritesheet 的第一帧作为 sprite 初始显示 ======
     const startSheetKey = `${type}_Idle`;
     ent.sprite = this.physics.add.sprite(x, y, startSheetKey, 0);
     ent.sprite.setCollideWorldBounds(true);
     ent.sprite.setBounce(0.02, 0.02);
     ent.sprite.setDepth(10);
-    // 按 displayH/frameH 比例缩放显示, 宽度随 1:1 帧保持比例
+    // 按 displayH/frameH 比例缩放显示 (保持帧 1:1)
     const scale = cfg.displayH / cfg.frameH;
     ent.sprite.setScale(scale);
-    // 脚底对齐 (sprite 底部就是 y, origin = (0.5, 1.0))
+    // 脚底对齐 (sprite 底部 y = 脚底)
     ent.sprite.setOrigin(0.5, 1.0);
 
-    // AABB 盒碰撞体 (按 cfg.bodyW × cfg.bodyH, 身体中心在 y - bodyH/2 - bodyOffsetY 下方
-    // body 坐标 = sprite 底部 (x,y) 上方 bodyH, 因此 body.top = y - bodyH)
-    ent.sprite.body.setSize(cfg.bodyW, cfg.bodyH, false);
-    // offset (sprite 坐标以 origin=(0.5,1) 计算时; body 默认是按 displayWidth/2 中心, 我们手动调)
+    // ====== AABB 碰撞盒: 基于"像素级实测 AABB × 缩放比 × margin" ======
+    //   目的: body 精确贴合人物实际视觉轮廓, 不再头顶一大块空气盒
+    const px = cfg.aabbPxSrc;
+    // 人物在"显示矩形"中的像素尺寸（显示矩形=sprite.displayWidth x displayHeight，=frame 乘 scale）
+    // aabbPxSrc 是 frame 内 px 坐标系（单位 = 帧像素, 范围 0..frameW-1, 脚=frameH-1=底）
+    // 缩放到显示矩形后 body 的真实宽高:
+    let bodyW = Math.round((px.right - px.left + 1) * scale * px.marginW);
+    let bodyH = Math.round((px.bottom - px.top + 1) * scale * px.marginH);
+    // body 中心相对 display 矩形(默认 origin=左上角 时 body 默认在 display 矩形左上) 的 offset
+    // 但我们 setOrigin(0.5,1.0) 时, setOffset(offsetX, offsetY) 的语义仍然是"body 左上角相对于
+    // sprite texture 的显示矩形左上角(未考虑 origin)的像素距离"。
+    // 显示矩形左上角(未考虑 origin)= (x - displayWidth/2, y - displayHeight)
     const dw = ent.sprite.displayWidth;
     const dh = ent.sprite.displayHeight;
-    // body 中心在 sprite 底部上方 (bodyH/2 + bodyOffsetY)
-    const offX = (dw - cfg.bodyW) / 2;                 // 水平居中
-    const offY = (dh - cfg.bodyH) - cfg.bodyOffsetY;   // 底部留 bodyOffsetY 像素空隙, 让 body 在脚上方
+    // px.left/right/top/bottom 在显示矩形中的位置
+    const dispL = px.left * scale;
+    const dispR = px.right * scale;
+    const dispT = px.top * scale;      // 显示矩形内, 人物头顶 Y (从显示矩形顶往下数)
+    const dispB = px.bottom * scale;   // 显示矩形内, 人物脚底 Y (底部方向)
+    // body 按 margin 往外扩, 保持对称 (left/right 各自扩)
+    const wSrc = (dispR - dispL + 1);
+    const hSrc = (dispB - dispT + 1);
+    const extraW = bodyW - wSrc;   // total extra pixels on width (正数 → 在 left/right 平分)
+    const extraH = bodyH - hSrc;   // 上下平分, 但底部尽量少扩 (人物头顶 60% / 脚底 40%)
+    const offX = Math.max(0, Math.round(dispL - extraW * 0.5));
+    const offY = Math.max(0, Math.round(dispT - extraH * 0.6));  // 头顶 60% 向上余量
+    // 保证 body 整体在显示矩形内
+    if (offX + bodyW > dw) bodyW = Math.max(4, dw - offX);
+    if (offY + bodyH > dh) bodyH = Math.max(8, dh - offY);
+    ent.sprite.body.setSize(bodyW, bodyH, false);
     ent.sprite.body.setOffset(offX, offY);
+    // 把已生效的尺寸写回 cfg 的运行时副本 (后续逻辑读取 bodyW/bodyH 用这个就行, 不污染全局 ENTITY_CONFIG)
+    ent.bodyW = bodyW; ent.bodyH = bodyH;
     ent.sprite.body.mass = cfg.weight;
 
     ent.type = type; ent.cfg = cfg;

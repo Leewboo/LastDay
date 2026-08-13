@@ -25,13 +25,12 @@ const ENTITY_CONFIG = {
     color: PALETTE.green, accentColor: PALETTE.greenDark, skinColor: PALETTE.skin,
     // ===== 真实 sprite (每帧 100x100, 底部对齐) =====
     frameW: 100, frameH: 100,
-    // 显示高度 (放大 1.7x, 视觉更有存在感)
     displayH: 108,
-    // 物理 AABB 盒 (缩小到真实人体轮廓 ≈ 身体宽高比 ~ 1:2.5, 脚底贴地面)
+    // 物理 AABB 盒 (贴合人物真实轮廓 ≈ 身体宽高比 ~ 1:2.6, 脚底贴地面)
     bodyW: 22, bodyH: 58, bodyOffsetY: 0,
     assetDir: 'assets/sprites/survivor_male',
-    frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6 },
-    // 兼容旧代码 cfg.size: 与 displayH 同比例, 用于平台判定/UI/预览口径一致
+    // 每动作帧数: with Bottom Align (无阴影), 帧高100, 宽度= n*100
+    frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6, Transform: 10 },
     size: 36
   },
   survivor_female: {
@@ -45,7 +44,7 @@ const ENTITY_CONFIG = {
     displayH: 104,
     bodyW: 20, bodyH: 54, bodyOffsetY: 0,
     assetDir: 'assets/sprites/survivor_female',
-    frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6 },
+    frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6, Transform: 10 },
     size: 34
   },
   zombie_normal: {
@@ -59,7 +58,8 @@ const ENTITY_CONFIG = {
     displayH: 106,
     bodyW: 22, bodyH: 58, bodyOffsetY: 0,
     assetDir: 'assets/sprites/zombie_normal',
-    frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6 },
+    // 僵尸只有一套 Attack (ZMeleeV1-Attack.png → Attack1, 无 Attack2), 两套 Death(Death=Death1, Death2=备用)
+    frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 35
   },
   zombie_fast: {
@@ -73,7 +73,7 @@ const ENTITY_CONFIG = {
     displayH: 100,
     bodyW: 19, bodyH: 52, bodyOffsetY: 0,
     assetDir: 'assets/sprites/zombie_fast',
-    frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6 },
+    frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 33
   },
   zombie_tank: {
@@ -83,11 +83,12 @@ const ENTITY_CONFIG = {
     detectRange: 360,
     jumpPower: 400, weight: 1.8,
     color: PALETTE.red, accentColor: PALETTE.redDarker, skinColor: PALETTE.skinZ,
-    frameW: 100, frameH: 100,
+    // TANK 是 ZMeleeV1 × 1.5 放大, 每帧 150x150
+    frameW: 150, frameH: 150,
     displayH: 156,
     bodyW: 38, bodyH: 92, bodyOffsetY: 0,
     assetDir: 'assets/sprites/zombie_tank',
-    frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6 },
+    frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6, Death2: 6 },
     size: 52
   }
 };
@@ -239,7 +240,7 @@ class BootScene extends Phaser.Scene {
   }
 
   create() {
-    // ========== 注册每个类型的 Phaser 动画: idle / walk / attack1 / attack2 / hurt / death ==========
+    // ========== 注册每个类型的 Phaser 动画: idle / walk / attack1 / attack2 / hurt / death / transform / death2 ==========
     Object.keys(ENTITY_CONFIG).forEach(type => {
       const cfg = ENTITY_CONFIG[type];
       const anims = this.anims;
@@ -248,7 +249,7 @@ class BootScene extends Phaser.Scene {
         const key = `${type}_${action}`;
         if (!this.textures.exists(key)) return;
         const frames = cfg.frames[action] || 1;
-        const keyAnim = `${type}:${action.toLowerCase()}`; // e.g. survivor_male:walking
+        const keyAnim = `${type}:${action.toLowerCase()}`;
         if (anims.exists(keyAnim)) return;
         anims.create({
           key: keyAnim,
@@ -260,10 +261,12 @@ class BootScene extends Phaser.Scene {
       mk('Walking',  cfg.category === 'zombie_fast' ? 9.0
                     : cfg.category === 'zombie'      ? 5.5
                     : cfg.category === 'survivor'    ? 8.5 : 6.5);
-      mk('Attack1',  9.5, 0);        // attack 播一次
-      mk('Attack2',  9.5, 0);
+      mk('Attack1',  9.5, 0);
+      mk('Attack2',  9.5, 0);       // 仅生还者, zombie 纹理不存在, mk 内会跳过
       mk('Hurt',     7.0, 0);
       mk('Death',    6.0, 0);
+      mk('Death2',   6.0, 0);       // 僵尸备用死亡 (爆头/暴击)
+      mk('Transform', 5.5, 0);      // 仅生还者: 死亡→僵尸化转变, 播1次
     });
 
     // ========== 占位/UI 纹理 (保留) ==========
@@ -1189,6 +1192,7 @@ class GameScene extends Phaser.Scene {
 
     this.entities.push(ent);
     this.updateStats(true);
+    return ent;
   }
 
   updateStats() {
@@ -1487,20 +1491,33 @@ class GameScene extends Phaser.Scene {
 
   dealDamage(entity, dmg, attacker, realTime) {
     entity.hp -= dmg;
-    entity.hitFlash = 18;
+    entity.hitFlash = 20;
     const by = entity.sprite.y - entity.cfg.displayH;
     this.showDamageNumber(entity.sprite.x, by + 4, dmg, attacker.cfg.category === 'zombie');
-    // ===== 播放受伤动画 =====
-    const hurtKey = `${entity.type}:hurt`;
-    if (!entity.isDead && this.anims.exists(hurtKey)) {
-      entity.sprite.play(hurtKey, true);
-      const frames = entity.cfg.frames.Hurt || 4;
-      entity._hurtAnimUntil = performance.now() + (frames / 7) * 1000;
+    // ===== 受伤动画: 必播, 优先级高于攻击 (被打中立刻疼一下) =====
+    if (!entity.isDead) {
+      const hurtKey = `${entity.type}:hurt`;
+      if (this.anims.exists(hurtKey)) {
+        entity.sprite.play(hurtKey, true); // true = ignoreIfPlaying = 重启动画, 保证每次命中都播
+        const frames = entity.cfg.frames.Hurt || 4;
+        entity._hurtAnimUntil = realTime + (frames / 7) * 1000;
+        entity._attackAnimUntil = 0;      // 受伤打断正在挥砍的攻击动画
+      }
     }
-    if (entity.hp <= 0) this.killEntity(entity, attacker);
+    if (entity.hp <= 0) this.killEntity(entity, attacker, realTime);
   }
 
-  killEntity(entity) {
+  // ===== 人类 → 僵尸的映射关系 (被僵尸咬死后感染变成什么) =====
+  // MeleeV1(MALE) 对应 ZMeleeV1 (normal zombie), MeleeV2(FEMALE) 对应 ZMeleeV2 (fast zombie)
+  _survivorToZombie(survivorType) {
+    switch (survivorType) {
+      case 'survivor_male':   return 'zombie_normal';
+      case 'survivor_female': return 'zombie_fast';
+      default: return null;
+    }
+  }
+
+  killEntity(entity, attacker = null, realTime = performance.now()) {
     entity.isDead = true;
     entity.sprite.setVelocityX(0);
     entity.sprite.setDepth(5);
@@ -1509,26 +1526,84 @@ class GameScene extends Phaser.Scene {
     entity.hpBarBg.destroy();
     entity.nameTag.destroy();
 
-    // ===== 播放死亡动画 (播完后保留最后一帧) =====
-    const deathKey = `${entity.type}:death`;
-    if (this.anims.exists(deathKey)) {
+    const cfg = entity.cfg;
+    const willInfect = (cfg.category === 'survivor'
+                        && attacker && attacker.cfg && attacker.cfg.category === 'zombie');
+
+    // ===== 死亡动画: 人类被感染时 death → transform → 复活成 zombie; 否则 death → dim + 尸体块 =====
+    const deathAnimKey = `${entity.type}:death`;
+    const transformAnimKey = `${entity.type}:transform`;
+    const hasDeath = this.anims.exists(deathAnimKey);
+    const hasTransform = willInfect && this.anims.exists(transformAnimKey);
+
+    // 清理旧的 animationcomplete 监听器避免多次触发
+    entity.sprite.removeAllListeners('animationcomplete');
+
+    const finishDeathNormally = () => {
+      entity.sprite.setTint(PALETTE.muted);
+      // 尸体阴影块 (贴合脚底)
+      const cg = this.add.graphics();
+      cg.fillStyle(PALETTE.black, 0.5);
+      cg.fillRect(-cfg.size, -cfg.size * 0.25, cfg.size * 2, cfg.size * 0.5);
+      cg.setPosition(entity.sprite.x, entity.sprite.y - cfg.displayH * 0.1);
+      cg.setDepth(4);
+      this.corpses.push({ sprite: entity.sprite, gfx: cg });
+      entity._corpseGfx = cg;
+    };
+
+    if (hasDeath) {
       entity.sprite.setTint(0xffffff);
-      entity.sprite.play(deathKey);
-      entity.sprite.once('animationcomplete', () => {
-        entity.sprite.setTint(PALETTE.muted);
-      });
+      entity.sprite.play(deathAnimKey, true);
     } else {
       entity.sprite.setTint(PALETTE.muted);
       entity.sprite.setAngle(90);
     }
 
-    const cg = this.add.graphics();
-    cg.fillStyle(PALETTE.black, 0.5);
-    cg.fillRect(-entity.cfg.size, -entity.cfg.size * 0.3, entity.cfg.size * 2, entity.cfg.size * 0.6);
-    cg.setPosition(entity.sprite.x, entity.sprite.y - entity.cfg.displayH * 0.15);
-    cg.setDepth(4);
-    this.corpses.push({ sprite: entity.sprite, gfx: cg });
-    entity._corpseGfx = cg;
+    if (hasTransform) {
+      // 人类感染流程: death 播完 → transform → spawn zombie
+      const zombify = () => {
+        const zType = this._survivorToZombie(entity.type);
+        if (!zType) { finishDeathNormally(); return; }
+        // 先播 transform 动画 (生还者 -> 丧尸 转变过程)
+        entity.sprite.clearTint();
+        entity.sprite.play(transformAnimKey, true);
+        entity.sprite.once('animationcomplete', () => {
+          // 转变完成: 销毁旧 sprite/corpses 记录, 在同位置生成新 zombie, 脚对齐 y
+          const spawnX = entity.sprite.x;
+          const spawnY = entity.sprite.y; // transform 的 origin 仍是 (0.5,1.0), y 是脚底
+          // 清理尸体阴影块(如果有)
+          if (entity._corpseGfx) { entity._corpseGfx.destroy?.(); entity._corpseGfx = null; }
+          // 从 corpses 里把自己去掉 (如果 death 阶段加进去了)
+          this.corpses = this.corpses.filter(c => c.sprite !== entity.sprite);
+          // 销毁实体 sprite / UI (hpBar 已在上面销毁, 但防意外再 destroy 一次)
+          entity.sprite.destroy();
+          this.stats.dead -= 1; // 这是"复活"不算真死
+          // 生成新 zombie (HP 满的, 属于僵尸阵营)
+          const newZombie = this.spawnEntity(zType, spawnX, spawnY);
+          if (newZombie) {
+            // 新 zombie 朝最近的 survivor
+            newZombie.wanderDir = (attacker && attacker.sprite.x < spawnX) ? -1 : 1;
+            // 刚变完给 0.7s 无敌 + 屏幕抖一下
+            newZombie.sprite.setAlpha(0.95);
+          }
+          this.updateStats(true);
+        });
+      };
+      if (hasDeath) {
+        entity.sprite.once('animationcomplete', (anim) => {
+          if (`${entity.type}:death` === anim?.key) zombify();
+        });
+      } else {
+        zombify();
+      }
+    } else {
+      // 非感染: death 完变灰
+      if (hasDeath) {
+        entity.sprite.once('animationcomplete', () => finishDeathNormally());
+      } else {
+        finishDeathNormally();
+      }
+    }
 
     const idx = this.entities.indexOf(entity);
     if (idx >= 0) this.entities.splice(idx, 1);

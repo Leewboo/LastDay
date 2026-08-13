@@ -143,7 +143,7 @@ function bootstrap() {
         default: 'arcade',
         arcade: {
           gravity: { y: 900 },
-          debug: false,
+          debug: true,
           tileBias: 24
         }
       },
@@ -1207,7 +1207,16 @@ class GameScene extends Phaser.Scene {
 
     // 物理碰撞
     this.physics.add.collider(ent.sprite, this.groundGroup);
-    this.physics.add.collider(ent.sprite, this.platformGroup);
+    // 平台 = 单向碰撞: 只在角色从上方落下时踩住, 从下方/侧面可穿过
+    this.physics.add.collider(ent.sprite, this.platformGroup, null, (entitySprite, platSprite) => {
+      const eb = entitySprite.body;
+      const pb = platSprite.body;
+      // entity body 底部 和 platform body 顶部的距离
+      const entityBottom = eb.y + eb.height;
+      const platformTop = pb.y;
+      // 正在下落(含静止站在上面 vy≈0) 且 body 底在平台顶部上方/附近(容差 10px) → 允许碰撞
+      return eb.velocity.y >= -2 && entityBottom <= platformTop + 10;
+    }, this);
     this.physics.add.collider(ent.sprite, this.sideWalls);
     this.entities.forEach(other => {
       this.physics.add.collider(ent.sprite, other.sprite, null, null, this);

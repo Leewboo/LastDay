@@ -19,42 +19,77 @@ const ENTITY_CONFIG = {
   survivor_male: {
     name: 'MALE', category: 'survivor',
     hp: 100, maxHp: 100, speed: 110, damage: 15,
-    attackRange: 38, attackCooldown: 800,
+    attackRange: 46, attackCooldown: 800,
     detectRange: 260, fleeRange: 100, aggression: 0.4,
     jumpPower: 460, weight: 1,
-    color: PALETTE.green, accentColor: PALETTE.greenDark, skinColor: PALETTE.skin, size: 14
+    color: PALETTE.green, accentColor: PALETTE.greenDark, skinColor: PALETTE.skin,
+    // ===== 真实 sprite (每帧 100x100, 底部对齐) =====
+    frameW: 100, frameH: 100,
+    // 显示高度
+    displayH: 64,
+    // 物理 AABB 盒 (贴合人物身体,脚在底部)
+    bodyW: 38, bodyH: 56, bodyOffsetY: 8,
+    assetDir: 'assets/sprites/survivor_male',
+    // 每动作帧数
+    frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6 },
+    // 兼容旧代码 cfg.size: (displayH * 0.33 ≈ 原 placeholder 尺寸数量级, 用于 UI 偏移)
+    size: 22
   },
   survivor_female: {
     name: 'FEMALE', category: 'survivor',
     hp: 85, maxHp: 85, speed: 125, damage: 11,
-    attackRange: 34, attackCooldown: 700,
+    attackRange: 42, attackCooldown: 700,
     detectRange: 300, fleeRange: 130, aggression: 0.25,
     jumpPower: 500, weight: 0.9,
-    color: PALETTE.green, accentColor: PALETTE.greenDarker, skinColor: PALETTE.skin, size: 13
+    color: '#f472b6', accentColor: PALETTE.greenDarker, skinColor: PALETTE.skin,
+    frameW: 100, frameH: 100,
+    displayH: 62,
+    bodyW: 36, bodyH: 54, bodyOffsetY: 8,
+    assetDir: 'assets/sprites/survivor_female',
+    frames: { Idle: 4, Walking: 8, Attack1: 8, Attack2: 8, Hurt: 4, Death: 6 },
+    size: 21
   },
   zombie_normal: {
     name: 'NORMAL', category: 'zombie',
     hp: 110, maxHp: 110, speed: 55, damage: 14,
-    attackRange: 32, attackCooldown: 1000,
+    attackRange: 40, attackCooldown: 1000,
     detectRange: 320,
     jumpPower: 400, weight: 1.1,
-    color: PALETTE.red, accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ, size: 14
+    color: PALETTE.red, accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
+    frameW: 100, frameH: 100,
+    displayH: 64,
+    bodyW: 38, bodyH: 56, bodyOffsetY: 8,
+    assetDir: 'assets/sprites/zombie_normal',
+    frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6 },
+    size: 22
   },
   zombie_fast: {
     name: 'FAST', category: 'zombie',
     hp: 60, maxHp: 60, speed: 150, damage: 8,
-    attackRange: 28, attackCooldown: 550,
+    attackRange: 36, attackCooldown: 550,
     detectRange: 360,
     jumpPower: 520, weight: 0.8,
-    color: PALETTE.red, accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ, size: 12
+    color: '#f59e0b', accentColor: PALETTE.redDark, skinColor: PALETTE.skinZ,
+    frameW: 100, frameH: 100,
+    displayH: 60,
+    bodyW: 34, bodyH: 54, bodyOffsetY: 8,
+    assetDir: 'assets/sprites/zombie_fast',
+    frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6 },
+    size: 20
   },
   zombie_tank: {
     name: 'TANK', category: 'zombie',
     hp: 360, maxHp: 360, speed: 35, damage: 32,
-    attackRange: 40, attackCooldown: 1400,
+    attackRange: 48, attackCooldown: 1400,
     detectRange: 280,
     jumpPower: 320, weight: 1.8,
-    color: PALETTE.red, accentColor: PALETTE.redDarker, skinColor: PALETTE.skinZ, size: 19
+    color: PALETTE.red, accentColor: PALETTE.redDarker, skinColor: PALETTE.skinZ,
+    frameW: 100, frameH: 100,
+    displayH: 90,
+    bodyW: 54, bodyH: 78, bodyOffsetY: 12,
+    assetDir: 'assets/sprites/zombie_tank',
+    frames: { Idle: 4, Walking: 8, Attack1: 7, Hurt: 4, Death: 6 },
+    size: 30
   }
 };
 
@@ -186,14 +221,57 @@ class BootScene extends Phaser.Scene {
   constructor() { super('BootScene'); }
   preload() {
     try { this.load.json('assetCheck', '/api/assets'); } catch (e) {}
-  }
-  create() {
+
+    // ========== 预加载每个类型的 5~6 种 spritesheet (每帧 100x100) ==========
     Object.keys(ENTITY_CONFIG).forEach(type => {
-      this.generateCharacterTexture(type, ENTITY_CONFIG[type]);
+      const cfg = ENTITY_CONFIG[type];
+      const actions = Object.keys(cfg.frames);
+      actions.forEach(action => {
+        const key = `${type}_${action}`;             // e.g. survivor_male_Walking
+        const url = `${cfg.assetDir}/${action}.png`; // e.g. assets/sprites/survivor_male/Walking.png
+        const frames = cfg.frames[action];
+        const sheetW = frames * cfg.frameW;
+        this.load.spritesheet(key, url, {
+          frameWidth: cfg.frameW, frameHeight: cfg.frameH,
+          endFrame: frames - 1, margin: 0, spacing: 0
+        });
+      });
     });
+  }
+
+  create() {
+    // ========== 注册每个类型的 Phaser 动画: idle / walk / attack1 / attack2 / hurt / death ==========
+    Object.keys(ENTITY_CONFIG).forEach(type => {
+      const cfg = ENTITY_CONFIG[type];
+      const anims = this.anims;
+
+      const mk = (action, frameRate, repeat = -1) => {
+        const key = `${type}_${action}`;
+        if (!this.textures.exists(key)) return;
+        const frames = cfg.frames[action] || 1;
+        const keyAnim = `${type}:${action.toLowerCase()}`; // e.g. survivor_male:walking
+        if (anims.exists(keyAnim)) return;
+        anims.create({
+          key: keyAnim,
+          frames: anims.generateFrameNumbers(key, { start: 0, end: frames - 1 }),
+          frameRate, repeat
+        });
+      };
+      mk('Idle',     cfg.category === 'zombie' ? 2.2 : 3.0);
+      mk('Walking',  cfg.category === 'zombie_fast' ? 9.0
+                    : cfg.category === 'zombie'      ? 5.5
+                    : cfg.category === 'survivor'    ? 8.5 : 6.5);
+      mk('Attack1',  9.5, 0);        // attack 播一次
+      mk('Attack2',  9.5, 0);
+      mk('Hurt',     7.0, 0);
+      mk('Death',    6.0, 0);
+    });
+
+    // ========== 占位/UI 纹理 (保留) ==========
     this.generateHpBarTextures();
     this.generateSkyTexture();
     this.generateGroundTexture();
+
     this.scene.start('GameScene');
   }
 
@@ -1031,13 +1109,28 @@ class GameScene extends Phaser.Scene {
   spawnEntity(type, x, y) {
     const cfg = ENTITY_CONFIG[type];
     const ent = {};
-    ent.sprite = this.physics.add.sprite(x, y, type);
+    // ====== 用 spritesheet 的第一帧作为 sprite 初始显示 (texture = type_Walking 或 type_Idle 都可以) ======
+    const startSheetKey = `${type}_Idle`;
+    ent.sprite = this.physics.add.sprite(x, y, startSheetKey, 0);
     ent.sprite.setCollideWorldBounds(true);
-    ent.sprite.setBounce(0.02, 0.08);
+    ent.sprite.setBounce(0.02, 0.02);
     ent.sprite.setDepth(10);
-    const r = cfg.size * 0.6;
-    ent.sprite.body.setCircle(r, cfg.size * 0.2, cfg.size * 0.5);
-    // 使用全局 Arcade gravity (900px/s²), 不再覆盖为0 (之前会导致角色悬浮/永远贴在世界边界底部)
+    // 按 displayH/frameH 比例缩放显示, 宽度随 1:1 帧保持比例
+    const scale = cfg.displayH / cfg.frameH;
+    ent.sprite.setScale(scale);
+    // 脚底对齐 (sprite 底部就是 y, origin = (0.5, 1.0))
+    ent.sprite.setOrigin(0.5, 1.0);
+
+    // AABB 盒碰撞体 (按 cfg.bodyW × cfg.bodyH, 身体中心在 y - bodyH/2 - bodyOffsetY 下方
+    // body 坐标 = sprite 底部 (x,y) 上方 bodyH, 因此 body.top = y - bodyH)
+    ent.sprite.body.setSize(cfg.bodyW, cfg.bodyH, false);
+    // offset (sprite 坐标以 origin=(0.5,1) 计算时; body 默认是按 displayWidth/2 中心, 我们手动调)
+    const dw = ent.sprite.displayWidth;
+    const dh = ent.sprite.displayHeight;
+    // body 中心在 sprite 底部上方 (bodyH/2 + bodyOffsetY)
+    const offX = (dw - cfg.bodyW) / 2;                 // 水平居中
+    const offY = (dh - cfg.bodyH) - cfg.bodyOffsetY;   // 底部留 bodyOffsetY 像素空隙, 让 body 在脚上方
+    ent.sprite.body.setOffset(offX, offY);
     ent.sprite.body.mass = cfg.weight;
 
     ent.type = type; ent.cfg = cfg;
@@ -1048,15 +1141,18 @@ class GameScene extends Phaser.Scene {
     ent.wanderTimer = 0;
     ent.hitFlash = 0;
     ent.jumpCooldown = 0;
+    ent._attackAnimUntil = 0; // 攻击动画播放完之前不切回 walk/idle
+    ent._hurtAnimUntil = 0;
 
-    // 血条
-    ent.hpBarBg = this.add.image(x, y - cfg.size * 2, 'hpBarBg').setDepth(20);
-    ent.hpBar = this.add.image(x, y - cfg.size * 2, 'hpBarGreen').setDepth(21);
+    // 血条 & 名称 基于 sprite 脚底位置 (y) 和 displayH
+    const hpBarY = y - cfg.displayH - 6;
+    const nameY  = y - cfg.displayH - 18;
+    ent.hpBarBg = this.add.image(x, hpBarY, 'hpBarBg').setDepth(20);
+    ent.hpBar = this.add.image(x - 21, hpBarY, 'hpBarGreen').setDepth(21);
     ent.hpBar.setOrigin(0.05, 0.5);
     ent.hpBarBg.setOrigin(0.5, 0.5);
 
-    // 名称
-    ent.nameTag = this.add.text(x, y - cfg.size * 2.8, cfg.name, {
+    ent.nameTag = this.add.text(x, nameY, cfg.name, {
       fontFamily: 'JetBrains Mono, Menlo, Consolas, monospace',
       fontSize: '9px',
       color: cfg.category === 'survivor' ? '#22c55e' : '#ef4444',
@@ -1070,6 +1166,10 @@ class GameScene extends Phaser.Scene {
     this.entities.forEach(other => {
       this.physics.add.collider(ent.sprite, other.sprite, null, null, this);
     });
+
+    // 默认播放 idle
+    const idleKey = `${type}:idle`;
+    if (this.anims.exists(idleKey)) ent.sprite.play(idleKey);
 
     this.entities.push(ent);
     this.updateStats(true);
@@ -1142,7 +1242,7 @@ class GameScene extends Phaser.Scene {
     this.entities.forEach(ent => {
       if (ent.isDead) return;
       this.updateEntityAI(ent, now, dt, time);
-      this.updateEntityVisuals(ent);
+      this.updateEntityVisuals(ent, time);
     });
 
     this.fightEffects = this.fightEffects.filter(fx => {
@@ -1355,30 +1455,61 @@ class GameScene extends Phaser.Scene {
     defender.sprite.setVelocityY(-80);
     this.showAttackEffect(attacker, defender);
     this.stats.fights++;
+
+    // ===== 播放攻击动画 (Attack1 或 Attack2) =====
+    const cfg = attacker.cfg;
+    const has2 = !!cfg.frames.Attack2;
+    const atkName = (has2 && Math.random() < 0.35) ? 'attack2' : 'attack1';
+    const animKey = `${attacker.type}:${atkName}`;
+    if (this.anims.exists(animKey)) {
+      attacker.sprite.play(animKey, true); // ignoreIfPlaying=false, 重启动画
+      const frames = atkName === 'attack2' ? cfg.frames.Attack2 : cfg.frames.Attack1;
+      const frameRate = 9.5;
+      attacker._attackAnimUntil = now + (frames / frameRate) * 1000;
+    }
   }
 
   dealDamage(entity, dmg, attacker, realTime) {
     entity.hp -= dmg;
     entity.hitFlash = 18;
-    this.showDamageNumber(entity.sprite.x, entity.sprite.y - entity.cfg.size * 2, dmg, attacker.cfg.category === 'zombie');
+    const by = entity.sprite.y - entity.cfg.displayH;
+    this.showDamageNumber(entity.sprite.x, by + 4, dmg, attacker.cfg.category === 'zombie');
+    // ===== 播放受伤动画 =====
+    const hurtKey = `${entity.type}:hurt`;
+    if (!entity.isDead && this.anims.exists(hurtKey)) {
+      entity.sprite.play(hurtKey, true);
+      const frames = entity.cfg.frames.Hurt || 4;
+      entity._hurtAnimUntil = performance.now() + (frames / 7) * 1000;
+    }
     if (entity.hp <= 0) this.killEntity(entity, attacker);
   }
 
   killEntity(entity) {
     entity.isDead = true;
     entity.sprite.setVelocityX(0);
-    entity.sprite.setTint(PALETTE.muted);
-    entity.sprite.setAngle(90);
     entity.sprite.setDepth(5);
-    entity.sprite.body.enable = false;
+    if (entity.sprite.body) entity.sprite.body.enable = false;
     entity.hpBar.destroy();
     entity.hpBarBg.destroy();
     entity.nameTag.destroy();
 
+    // ===== 播放死亡动画 (播完后保留最后一帧) =====
+    const deathKey = `${entity.type}:death`;
+    if (this.anims.exists(deathKey)) {
+      entity.sprite.setTint(0xffffff);
+      entity.sprite.play(deathKey);
+      entity.sprite.once('animationcomplete', () => {
+        entity.sprite.setTint(PALETTE.muted);
+      });
+    } else {
+      entity.sprite.setTint(PALETTE.muted);
+      entity.sprite.setAngle(90);
+    }
+
     const cg = this.add.graphics();
     cg.fillStyle(PALETTE.black, 0.5);
     cg.fillRect(-entity.cfg.size, -entity.cfg.size * 0.3, entity.cfg.size * 2, entity.cfg.size * 0.6);
-    cg.setPosition(entity.sprite.x, entity.sprite.y + entity.cfg.size * 0.5);
+    cg.setPosition(entity.sprite.x, entity.sprite.y - entity.cfg.displayH * 0.15);
     cg.setDepth(4);
     this.corpses.push({ sprite: entity.sprite, gfx: cg });
     entity._corpseGfx = cg;
@@ -1391,12 +1522,17 @@ class GameScene extends Phaser.Scene {
     const fx = this.add.graphics();
     fx.lineStyle(1, attacker.cfg.color, 1);
     fx.beginPath();
-    fx.moveTo(attacker.sprite.x, attacker.sprite.y - attacker.cfg.size * 0.4);
-    fx.lineTo(defender.sprite.x, defender.sprite.y - defender.cfg.size * 0.6);
+    // 基于显示高度: 攻击起点 ≈ 人物胸部 (displayH * 0.55 上方)
+    const ax = attacker.sprite.x;
+    const ay = attacker.sprite.y - attacker.cfg.displayH * 0.55;
+    const dx = defender.sprite.x;
+    const dy = defender.sprite.y - defender.cfg.displayH * 0.6;
+    fx.moveTo(ax, ay);
+    fx.lineTo(dx, dy);
     fx.strokePath();
     for (let i = 0; i < 3; i++) {
-      const sx = defender.sprite.x + Phaser.Math.FloatBetween(-6, 6);
-      const sy = defender.sprite.y - defender.cfg.size * 0.5 + Phaser.Math.FloatBetween(-6, 6);
+      const sx = dx + Phaser.Math.FloatBetween(-6, 6);
+      const sy = dy + Phaser.Math.FloatBetween(-6, 6);
       fx.fillStyle(attacker.cfg.color, 1);
       fx.fillRect(sx - 1, sy - 1, 2, 2);
     }
@@ -1412,11 +1548,12 @@ class GameScene extends Phaser.Scene {
     this.fightEffects.push({ sprite: txt, life: 650, maxLife: 650 });
   }
 
-  updateEntityVisuals(ent) {
+  updateEntityVisuals(ent, now) {
     if (ent.isDead) return;
-    const size = ent.cfg.size;
+    const cfg = ent.cfg;
+    // ===== 血条/名称位置: 放在显示区头顶 =====
     const bx = ent.sprite.x;
-    const by = ent.sprite.y - size * 1.9;
+    const by = ent.sprite.y - cfg.displayH - 6;
     ent.hpBarBg.setPosition(bx, by);
     ent.hpBar.setPosition(bx - 21, by);
     const pct = Math.max(0, ent.hp / ent.maxHp);
@@ -1424,7 +1561,37 @@ class GameScene extends Phaser.Scene {
     if (pct > 0.6) ent.hpBar.setTexture('hpBarGreen');
     else if (pct > 0.3) ent.hpBar.setTexture('hpBarYellow');
     else ent.hpBar.setTexture('hpBarRed');
-    ent.nameTag.setPosition(ent.sprite.x, ent.sprite.y - size * 2.8);
+    ent.nameTag.setPosition(ent.sprite.x, ent.sprite.y - cfg.displayH - 18);
+
+    // ===== 命中闪烁: 短暂闪白 =====
+    if (ent.hitFlash > 0) {
+      ent.sprite.setTint(0xffffff);
+      ent.hitFlash--;
+      if (ent.hitFlash === 0) ent.sprite.clearTint();
+    }
+
+    // ===== 朝向: 根据水平速度 flipX (sprite 原图朝右的话 flipX=true 变朝左) =====
+    const vx = ent.sprite.body.velocity.x;
+    if (vx < -4) ent.sprite.flipX = true;
+    else if (vx > 4) ent.sprite.flipX = false;
+
+    // ===== 动画切换: attack/hurt 期间保持, 否则按移动速度切 walk/idle =====
+    const inAttack = ent._attackAnimUntil && now < ent._attackAnimUntil;
+    const inHurt   = ent._hurtAnimUntil   && now < ent._hurtAnimUntil;
+    if (inAttack || inHurt) return;
+
+    const speed = Math.abs(vx);
+    if (speed > 18) {
+      const walkKey = `${ent.type}:walking`;
+      if (this.anims.exists(walkKey) && ent.sprite.anims.currentAnim?.key !== walkKey) {
+        ent.sprite.play(walkKey);
+      }
+    } else {
+      const idleKey = `${ent.type}:idle`;
+      if (this.anims.exists(idleKey) && ent.sprite.anims.currentAnim?.key !== idleKey) {
+        ent.sprite.play(idleKey);
+      }
+    }
   }
 
   clearAll() {

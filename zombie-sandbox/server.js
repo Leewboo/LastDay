@@ -143,12 +143,44 @@ async function getActiveBackend() {
 }
 
 // POST /api/llm/chat  body: { messages: [...], model?: 'qwen2.5:0.5b', temperature?: 0.8, maxTokens?: 60 }
+// 优先级: 1) 内嵌 node-llama-cpp (无外部服务) 2) Ollama 3) llama-server
+let _embeddedLlm = null;
+(async () => {
+  try {
+    _embeddedLlm = await import('./llm-embedded.mjs');
+    if (_embeddedLlm.isAvailable()) {
+      console.log(`[LLM] 内嵌后端就绪: ${_embeddedLlm.getModelPath()}`);
+      // 后台预热 (不阻塞服务器启动)
+      _embeddedLlm.warmup();
+    } else {
+      console.log('[LLM] 内嵌后端未启用 (未找到 .gguf 模型), 走 Ollama/llama-server 代理');
+      _embeddedLlm = null;
+    }
+  } catch (e) {
+    console.log(`[LLM] 内嵌后端加载跳过: ${e.message}`);
+    _embeddedLlm = null;
+  }
+})();
+
 app.post('/api/llm/chat', async (req, res) => {
   const { messages, model, temperature, maxTokens } = req.body || {};
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.json({ ok: false, error: 'messages required' });
   }
 
+  // 1) 优先用内嵌 node-llama-cpp
+  if (_embeddedLlm && _embeddedLlm.isAvailable()) {
+    try {
+      const content = await _embeddedLlm.chat({ messages, temperature: temperature ?? 0.9, maxTokens: maxTokens ?? 40 });
+      if (content) {
+        return res.json({ ok: true, content, backend: 'node-llama-cpp' });
+      }
+    } catch (e) {
+      console.error('[LLM] 内嵌后端出错, 降级到代理:', e.message);
+    }
+  }
+
+  // 2) 降级: Ollama / llama-server 代理
   const backend = await getActiveBackend();
   if (!backend) {
     return res.json({ ok: false, error: 'no_local_llm', fallback: true });
@@ -209,6 +241,16 @@ app.post('/api/llm/chat', async (req, res) => {
 
 // GET /api/llm/status — 前端轮询 LLM 后端是否可用
 app.get('/api/llm/status', async (req, res) => {
+  // 优先: 内嵌 node-llama-cpp
+  if (_embeddedLlm && _embeddedLlm.isAvailable()) {
+    return res.json({
+      available: true,
+      backend: 'node-llama-cpp',
+      modelPath: _embeddedLlm.getModelPath(),
+      models: ['qwen2.5:0.5b'],
+    });
+  }
+  // 降级: Ollama / llama-server
   const backend = await getActiveBackend();
   res.json({
     available: !!backend,

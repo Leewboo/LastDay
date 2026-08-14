@@ -89,6 +89,127 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ====== LLM 代理路由 (方案B: 本地 0.5B 小模型, 通过 Ollama 或 llama-server) ======
+// 前端通过 /api/llm/chat 发送请求, server 代理到本地 Ollama(:11434) 或 llama-server(:8080)
+// 带超时保护: 如果本地模型不可用或超时, 返回 { ok:false } 让前端 fallback 到模板
+
+const http = require('http');
+
+// 可配置的本地 LLM 后端列表 (按优先级尝试)
+const LLM_BACKENDS = [
+  { name: 'ollama',       host: '127.0.0.1', port: 11434, path: '/api/chat',    type: 'ollama' },
+  { name: 'llama-server', host: '127.0.0.1', port: 8080,  path: '/v1/chat/completions', type: 'openai' },
+];
+
+// 缓存: 哪个后端可用 (避免每次都探测)
+let _activeBackend = null;
+let _backendCheckTime = 0;
+const BACKEND_CHECK_INTERVAL = 30000; // 30秒重新探测一次
+
+// 探测本地 LLM 后端是否可用 (非阻塞, 超时 2 秒)
+function probeBackend(backend) {
+  return new Promise((resolve) => {
+    const req = http.get({
+      hostname: backend.host, port: backend.port,
+      path: backend.type === 'ollama' ? '/api/tags' : '/v1/models',
+      timeout: 2000,
+    }, (res) => {
+      let data = '';
+      res.on('data', d => data += d);
+      res.on('end', () => resolve(data.length > 0));
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
+
+async function getActiveBackend() {
+  const now = Date.now();
+  if (_activeBackend && now - _backendCheckTime < BACKEND_CHECK_INTERVAL) return _activeBackend;
+  for (const b of LLM_BACKENDS) {
+    const ok = await probeBackend(b);
+    if (ok) { _activeBackend = b; _backendCheckTime = now; return b; }
+  }
+  _activeBackend = null;
+  _backendCheckTime = now;
+  return null;
+}
+
+// POST /api/llm/chat  body: { messages: [...], model?: 'qwen2.5:0.5b', temperature?: 0.8, maxTokens?: 60 }
+app.post('/api/llm/chat', async (req, res) => {
+  const { messages, model, temperature, maxTokens } = req.body || {};
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.json({ ok: false, error: 'messages required' });
+  }
+
+  const backend = await getActiveBackend();
+  if (!backend) {
+    return res.json({ ok: false, error: 'no_local_llm', fallback: true });
+  }
+
+  // 构建请求体 (Ollama vs OpenAI 格式)
+  let payload;
+  if (backend.type === 'ollama') {
+    payload = JSON.stringify({
+      model: model || 'qwen2.5:0.5b',
+      messages,
+      stream: false,
+      options: { temperature: temperature ?? 0.8, num_predict: maxTokens ?? 60 },
+      format: 'json',  // 强制 JSON 输出
+    });
+  } else {
+    payload = JSON.stringify({
+      model: model || 'qwen2.5:0.5b',
+      messages,
+      temperature: temperature ?? 0.8,
+      max_tokens: maxTokens ?? 60,
+      response_format: { type: 'json_object' },
+    });
+  }
+
+  const postData = (method, pathStr, body) => new Promise((resolve) => {
+    const req2 = http.request({
+      hostname: backend.host, port: backend.port,
+      path: pathStr, method,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 8000, // 8秒超时 (0.5B 应该 200~500ms 出结果)
+    }, (resp) => {
+      let d = '';
+      resp.on('data', c => d += c);
+      resp.on('end', () => resolve({ status: resp.statusCode, body: d }));
+    });
+    req2.on('error', (e) => resolve({ status: 0, error: e.message }));
+    req2.on('timeout', () => { req2.destroy(); resolve({ status: 0, error: 'timeout' }); });
+    req2.write(body);
+    req2.end();
+  });
+
+  try {
+    const result = await postData('POST', backend.path, payload);
+    if (result.status !== 200 || !result.body) {
+      return res.json({ ok: false, error: `llm_status_${result.status}`, fallback: true });
+    }
+    const parsed = JSON.parse(result.body);
+    // 提取文本 (Ollama: parsed.message.content; OpenAI: parsed.choices[0].message.content)
+    const content = backend.type === 'ollama'
+      ? (parsed.message?.content || '')
+      : (parsed.choices?.[0]?.message?.content || '');
+    res.json({ ok: true, content, backend: backend.name });
+  } catch (e) {
+    res.json({ ok: false, error: e.message, fallback: true });
+  }
+});
+
+// GET /api/llm/status — 前端轮询 LLM 后端是否可用
+app.get('/api/llm/status', async (req, res) => {
+  const backend = await getActiveBackend();
+  res.json({
+    available: !!backend,
+    backend: backend ? backend.name : null,
+    models: backend ? ['qwen2.5:0.5b', 'qwen2.5:1.5b', 'tinyllama:1.1b'] : [],
+  });
+});
+
 // 健康检查
 app.get('/healthz', (req, res) => {
   const vendorExists = fs.existsSync(path.join(__dirname, 'public', 'vendor', 'phaser.min.js'));

@@ -90,6 +90,291 @@ const ENTITY_CONFIG = {
   }
 };
 
+// ---------- NPC 个性 & 台词模板 ----------
+const NPC_PERSONALITY = {
+  survivor_male: {
+    traits: ['勇敢', '警觉', '偶尔幽默'],
+    // 事件 → 模板台词数组 (随机选 1 条, {name}={自己}, {enemy}={敌人类型中文名})
+    barks: {
+      attack:    ['看招!', '吃我一刀!', '嘿!', '别过来!', '哈!', '去死吧!'],
+      hurt:      ['呃!', '该死...', '疼...', '咳咳', '我没事!'],
+      seeEnemy:  ['有丧尸!', '小心!', '前面有动静!', '敌人来了!'],
+      flee:      ['快跑!', '撤!', '打不过!', '先退!'],
+      jump:      ['嘿咻!', '跳!', '上去了!'],
+      death:     ['不...', '我...不想...', '救我...', '呃啊...'],
+      idle:      ['...', '还好', '安全吗?', '得找点物资', '这一天什么时候是头'],
+      teammateDied: ['不!', '兄弟!', '快跑!', '又一个...'],
+    },
+    // LLM system prompt (当 LLM 后端可用时, 0.5B 小模型也只需要生成 1 句话)
+    llmSystem: '你是一个在末日丧尸世界中求生的勇敢男性幸存者。根据当前情况说一句简短的中文台词(不超过15字)。只输出JSON: {"bark":"台词"}'
+  },
+  survivor_female: {
+    traits: ['机敏', '冷静', '偶尔吐槽'],
+    barks: {
+      attack:    ['嘿!', '看这边!', '太慢了!', '结束吧', '切!'],
+      hurt:      ['呃...', '可恶', '别碰我!', '嘶...'],
+      seeEnemy:  ['丧尸!', '注意!', '那边!', '来了!'],
+      flee:      ['走!', '快!', '来不及了!', '撤!'],
+      jump:      ['嘿!', '上!', '轻松'],
+      death:     ['不...', '为什么...', '抱歉...', '呃...'],
+      idle:      ['...', '安静', '保持警惕', '别松懈'],
+      teammateDied: ['不!', '快走!', '别停下来!'],
+    },
+    llmSystem: '你是一个在末日丧尸世界中求生的机敏女性幸存者。根据当前情况说一句简短的中文台词(不超过15字)。只输出JSON: {"bark":"台词"}'
+  },
+  zombie_normal: {
+    traits: ['迟缓', '嗜血', '低智'],
+    barks: {
+      attack:    ['吼!', '嗯...肉!', '饿!', '啊...'],
+      hurt:      ['嗷!', '呃...', '嗯!'],
+      seeEnemy:  ['肉...', '吼...', '嗯?'],
+      idle:      ['嗯...', '肉...', '饿...', '呃...'],
+      death:     ['呃...', '...'],
+    },
+    llmSystem: '你是一个迟缓的丧尸。只会发出简单的呻吟或单字。根据情况输出JSON: {"bark":"1-4字呻吟"}'
+  },
+  zombie_fast: {
+    traits: ['狂躁', '迅捷', '暴躁'],
+    barks: {
+      attack:    ['嗷!', '肉!', '吼啊!', '杀!'],
+      hurt:      ['嗷!', '呃啊!', '嘶!'],
+      seeEnemy:  ['肉!!', '吼!!', '嗷嗷!'],
+      idle:      ['嗷...', '吼...', '肉...'],
+      death:     ['嗷...', '呃...'],
+    },
+    llmSystem: '你是一个狂躁的快速丧尸。只会发出暴躁的嘶吼。根据情况输出JSON: {"bark":"1-4字嘶吼"}'
+  },
+  zombie_tank: {
+    traits: ['巨大', '笨重', '毁灭性'],
+    barks: {
+      attack:    ['吼!!!', '砸!', '嗯啊!!', '轰!'],
+      hurt:      ['嗯!', '嗷!', '呃!'],
+      seeEnemy:  ['吼...', '肉...', '嗯?'],
+      idle:      ['嗯...', '肉...', '吼...'],
+      death:     ['吼......', '嗯......'],
+    },
+    llmSystem: '你是一个巨大的坦克丧尸。发出低沉的咆哮。根据情况输出JSON: {"bark":"1-5字低吼"}'
+  }
+};
+
+// 敌人类型中文名 (用于模板替换)
+const ENTITY_CN_NAME = {
+  survivor_male: '男幸存者', survivor_female: '女幸存者',
+  zombie_normal: '普通丧尸', zombie_fast: '快速丧尸', zombie_tank: '坦克丧尸'
+};
+
+// ---------- BarkSystem: NPC 台词系统 (模板兜底 + LLM 增强) ----------
+class BarkSystem {
+  constructor(scene) {
+    this.scene = scene;
+    // LLM 模式: 'off' | 'template' | 'llm'
+    this.mode = 'template';
+    // LLM 可用性 (从 /api/llm/status 轮询)
+    this.llmAvailable = false;
+    // 并发请求队列 (背压: 同时最多 N 个 pending LLM 请求)
+    this.pendingCount = 0;
+    this.MAX_CONCURRENT = 2;
+    // 每个 NPC 的 bark 冷却 (避免同一个 NPC 刷屏)
+    this.barkCooldowns = new Map(); // ent._barkId → timestamp
+    this.BARK_COOLDOWN_MS = 4000; // 同一 NPC 4 秒内不重复 bark
+    // 气泡 UI 缓存
+    this.bubbles = []; // { ent, text, sprite, ttl }
+    this.nextBarkId = 0;
+  }
+
+  // 初始化时给每个 ent 分配一个唯一 ID
+  assignBarkId(ent) {
+    ent._barkId = this.nextBarkId++;
+  }
+
+  // 设置 LLM 模式 (前端切换)
+  setMode(mode) {
+    this.mode = mode;
+    if (mode === 'llm') {
+      // 触发一次后端探测
+      this.checkLlmStatus();
+    }
+  }
+
+  // 探测 LLM 后端是否可用
+  async checkLlmStatus() {
+    try {
+      const resp = await fetch('/api/llm/status');
+      const data = await resp.json();
+      this.llmAvailable = data.available;
+      return data.available;
+    } catch (e) {
+      this.llmAvailable = false;
+      return false;
+    }
+  }
+
+  // 触发 bark (事件入口)
+  // ent: 实体, event: 'attack'|'hurt'|'seeEnemy'|'flee'|'jump'|'death'|'idle'|'teammateDied'
+  // context: { enemyType?, enemyCount?, hpPct? }
+  triggerBark(ent, event, context = {}) {
+    if (!ent) return;
+    // off 模式: 完全静音 (不显示气泡, 也不请求 LLM)
+    if (this.mode === 'off') return;
+    // death 台词豁免 isDead 检查 (死亡瞬间 ent.isDead 已为 true, 但仍要喊遗言)
+    if (ent.isDead && event !== 'death') return;
+    const barkId = ent._barkId ?? -1;
+    // 冷却检查 (死亡台词不受冷却限制)
+    if (event !== 'death') {
+      const lastBark = this.barkCooldowns.get(barkId) || 0;
+      if (performance.now() - lastBark < this.BARK_COOLDOWN_MS) return;
+    }
+    this.barkCooldowns.set(barkId, performance.now());
+
+    const personality = NPC_PERSONALITY[ent.type];
+    if (!personality || !personality.barks[event]) return;
+
+    // 立刻用模板显示 (不等待 LLM, 保证 0 延迟)
+    const templates = personality.barks[event];
+    const tpl = templates[Math.floor(Math.random() * templates.length)];
+    const text = tpl.replace(/\{name\}/g, ent.cfg.name)
+                    .replace(/\{enemy\}/g, ENTITY_CN_NAME[context.enemyType] || '敌人');
+    this._showBubble(ent, text);
+
+    // 如果 LLM 模式开启且后端可用, 异步请求 LLM 增强台词 (替换气泡)
+    if (this.mode === 'llm' && this.llmAvailable && this.pendingCount < this.MAX_CONCURRENT) {
+      this._requestLlmBark(ent, event, context, personality);
+    }
+  }
+
+  // 异步请求 LLM 生成台词
+  async _requestLlmBark(ent, event, context, personality) {
+    this.pendingCount++;
+    try {
+      // 构建上下文描述
+      const situation = this._buildSituationDesc(ent, event, context);
+      const messages = [
+        { role: 'system', content: personality.llmSystem },
+        { role: 'user', content: `情况: ${situation}\n输出JSON: {"bark":"台词"}` }
+      ];
+      const resp = await fetch('/api/llm/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages, temperature: 0.9, maxTokens: 40 })
+      });
+      const data = await resp.json();
+      if (data.ok && data.content) {
+        // 尝试解析 JSON
+        let bark = '';
+        try {
+          const parsed = JSON.parse(data.content);
+          bark = parsed.bark || '';
+        } catch (e) {
+          // 如果不是合法 JSON, 直接用 content 作为文本 (截断到 20 字)
+          bark = data.content.trim().slice(0, 20);
+        }
+        if (bark && bark.length > 0 && bark.length <= 30) {
+          // 如果 NPC 还活着且气泡还在, 更新文本
+          if (!ent.isDead) this._showBubble(ent, bark, true);
+        }
+      }
+    } catch (e) {
+      // 静默失败, 模板已经显示了
+    } finally {
+      this.pendingCount--;
+    }
+  }
+
+  // 构建给 LLM 的情况描述
+  _buildSituationDesc(ent, event, context) {
+    const parts = [];
+    parts.push(`你是${ENTITY_CN_NAME[ent.type]}`);
+    if (context.enemyType) parts.push(`看到了${ENTITY_CN_NAME[context.enemyType]}`);
+    if (context.hpPct !== undefined) parts.push(`生命值${Math.round(context.hpPct * 100)}%`);
+    switch (event) {
+      case 'attack':    parts.push('正在攻击敌人'); break;
+      case 'hurt':      parts.push('被攻击受伤'); break;
+      case 'seeEnemy':  parts.push('发现敌人'); break;
+      case 'flee':      parts.push('正在逃跑'); break;
+      case 'jump':      parts.push('跳上平台'); break;
+      case 'death':     parts.push('即将死亡'); break;
+      case 'idle':      parts.push('暂时安全'); break;
+      case 'teammateDied': parts.push('同伴死了'); break;
+    }
+    return parts.join(', ');
+  }
+
+  // 显示/更新气泡文本
+  _showBubble(ent, text, isUpdate = false) {
+    if (!ent.sprite || ent.isDead) return;
+    // 计算气泡位置: 人物视觉头顶上方
+    const px = ent.cfg.aabbPxSrc;
+    const scale = ent.cfg.displayH / ent.cfg.frameH;
+    const visualTopY = ent.sprite.y - scale * (ent.cfg.frameH - px.top);
+    const bubbleY = visualTopY - 28;
+
+    // 如果已有气泡且是更新, 直接改文本
+    if (isUpdate && ent._bubble) {
+      ent._bubble.setText(text);
+      ent._bubble.setPosition(ent.sprite.x, bubbleY);
+      ent._bubble._ttl = 2500; // 刷新 TTL
+      return;
+    }
+
+    // 创建新气泡
+    if (!ent._bubble) {
+      ent._bubble = this.scene.add.text(ent.sprite.x, bubbleY, text, {
+        fontFamily: 'JetBrains Mono, Menlo, monospace',
+        fontSize: '16px',
+        fontStyle: 'bold',
+        color: '#ffffff',
+        backgroundColor: 'rgba(10,10,10,0.85)',
+        padding: { x: 7, y: 3 },
+        stroke: '#000000',
+        strokeThickness: 3,
+      }).setOrigin(0.5, 1.0).setDepth(50);
+    } else {
+      ent._bubble.setText(text);
+      ent._bubble.setPosition(ent.sprite.x, bubbleY);
+      ent._bubble.setVisible(true);
+    }
+    ent._bubble._ttl = 2500;
+    ent._bubble._bornAt = performance.now();
+  }
+
+  // 在 update 循环中调用: 更新气泡位置 + TTL 衰减
+  updateBubbles(dt) {
+    const now = performance.now();
+    this.entities = this.scene.entities;
+    for (const ent of this.scene.entities) {
+      if (ent._bubble && ent._bubble.visible) {
+        // 跟随 NPC 移动
+        const px = ent.cfg.aabbPxSrc;
+        const scale = ent.cfg.displayH / ent.cfg.frameH;
+        const visualTopY = ent.sprite.y - scale * (ent.cfg.frameH - px.top);
+        ent._bubble.setPosition(ent.sprite.x, visualTopY - 28);
+
+        // TTL 衰减
+        const elapsed = now - ent._bubble._bornAt;
+        if (elapsed > ent._bubble._ttl) {
+          ent._bubble.setVisible(false);
+        } else {
+          // 最后 500ms 淡出
+          const fadeStart = ent._bubble._ttl - 500;
+          if (elapsed > fadeStart) {
+            ent._bubble.setAlpha(1 - (elapsed - fadeStart) / 500);
+          } else {
+            ent._bubble.setAlpha(1);
+          }
+        }
+      }
+    }
+  }
+
+  // 清理死亡 NPC 的气泡
+  clearBubble(ent) {
+    if (ent._bubble) {
+      ent._bubble.destroy();
+      ent._bubble = null;
+    }
+  }
+}
+
 // ---------- 全局状态 ----------
 let gameInstance = null;
 let selectedTool = null;
@@ -475,6 +760,20 @@ class GameScene extends Phaser.Scene {
     this.corpses = [];
     this.fightEffects = [];
     this.stats = { survivors: 0, zombies: 0, dead: 0, fights: 0 };
+
+    // ===== NPC 台词系统 =====
+    this.barkSys = new BarkSystem(this);
+    // 从 localStorage 恢复用户选择的模式
+    const savedMode = localStorage.getItem('npc_bark_mode');
+    if (savedMode) {
+      this.barkSys.setMode(savedMode);
+    }
+    // 定期探测 LLM 后端 (每 30 秒)
+    this.barkSys.checkLlmStatus();
+    this._llmCheckTimer = this.time.addEvent({
+      delay: 30000, loop: true,
+      callback: () => this.barkSys.checkLlmStatus()
+    });
 
     const WORLD_W = GameScene.WORLD_W;
     const WORLD_H = GameScene.WORLD_H;
@@ -1209,6 +1508,9 @@ class GameScene extends Phaser.Scene {
     const idleKey = `${type}:idle`;
     if (this.anims.exists(idleKey)) ent.sprite.play(idleKey);
 
+    // 分配 bark ID (给台词系统用)
+    this.barkSys.assignBarkId(ent);
+
     this.entities.push(ent);
     this.updateStats(true);
     return ent;
@@ -1293,6 +1595,9 @@ class GameScene extends Phaser.Scene {
       return true;
     });
 
+    // ===== NPC 台词气泡: 跟随 NPC + TTL 衰减 =====
+    if (this.barkSys) this.barkSys.updateBubbles(delta);
+
     this.updateStats();
   }
 
@@ -1320,6 +1625,14 @@ class GameScene extends Phaser.Scene {
 
     ent.target = (nearestEnemy && nearestDist <= cfg.detectRange) ? nearestEnemy : null;
     const hasTarget = !!ent.target;
+    // ===== NPC 台词: 首次发现敌人时喊话 (从无目标 → 有目标) =====
+    if (hasTarget && !ent._hadTarget && this.barkSys) {
+      this.barkSys.triggerBark(ent, 'seeEnemy', {
+        enemyType: ent.target.type,
+        enemyCount: 1
+      });
+    }
+    ent._hadTarget = hasTarget;
 
     let dirX = 0; // -1,0,1
     let tryJump = false;
@@ -1468,10 +1781,19 @@ class GameScene extends Phaser.Scene {
     if (tryJump && onGround && ent.jumpCooldown === 0) {
       ent.sprite.setVelocityY(-cfg.jumpPower);
       ent.jumpCooldown = Math.max(16, 24 + Math.random() * 8);
+      // ===== NPC 台词: 跳跃时偶发喊话 =====
+      if (this.barkSys && Math.random() < 0.25) {
+        this.barkSys.triggerBark(ent, 'jump');
+      }
     }
 
     // 朝向
     if (dirX !== 0) ent.sprite.setFlipX(dirX < 0);
+
+    // ===== NPC 台词: 空闲时偶发嘟囔 (无目标 + 在地上, 低概率) =====
+    if (this.barkSys && !hasTarget && onGround && Math.random() < 0.0015) {
+      this.barkSys.triggerBark(ent, 'idle');
+    }
 
     // 受击闪烁
     if (ent.hitFlash > 0) {
@@ -1506,6 +1828,14 @@ class GameScene extends Phaser.Scene {
       const frameRate = 9.5;
       attacker._attackAnimUntil = now + (frames / frameRate) * 1000;
     }
+
+    // ===== NPC 台词: 攻击时喊话 =====
+    if (Math.random() < 0.35) {
+      this.barkSys.triggerBark(attacker, 'attack', {
+        enemyType: defender.type,
+        hpPct: defender.hp / defender.maxHp
+      });
+    }
   }
 
   dealDamage(entity, dmg, attacker, realTime) {
@@ -1522,6 +1852,13 @@ class GameScene extends Phaser.Scene {
         entity._hurtAnimUntil = realTime + (frames / 7) * 1000;
         entity._attackAnimUntil = 0;      // 受伤打断正在挥砍的攻击动画
       }
+      // ===== NPC 台词: 受伤喊疼 =====
+      if (Math.random() < 0.5) {
+        this.barkSys.triggerBark(entity, 'hurt', {
+          enemyType: attacker.type,
+          hpPct: entity.hp / entity.maxHp
+        });
+      }
     }
     if (entity.hp <= 0) this.killEntity(entity, attacker, realTime);
   }
@@ -1537,6 +1874,13 @@ class GameScene extends Phaser.Scene {
   }
 
   killEntity(entity, attacker = null, realTime = performance.now()) {
+    // ===== NPC 台词: 死亡遗言 (在 isDead 设置前触发, 无冷却限制) =====
+    if (this.barkSys) {
+      this.barkSys.triggerBark(entity, 'death', {
+        enemyType: attacker ? attacker.type : null,
+        hpPct: 0
+      });
+    }
     entity.isDead = true;
     entity.sprite.setVelocityX(0);
     entity.sprite.setDepth(5);
@@ -2051,6 +2395,27 @@ function setupToolbar() {
     btn.addEventListener('contextmenu', (e) => e.preventDefault());
   }
   dpadDirs.forEach(bindDPadButton);
+
+  // -------- NPC 台词模式切换 (OFF / TPL / LLM) --------
+  function setBarkMode(mode) {
+    const scene = gameInstance?.scene.getScene('GameScene');
+    if (scene && scene.barkSys) scene.barkSys.setMode(mode);
+    try { localStorage.setItem('npc_bark_mode', mode); } catch (e) {}
+    document.querySelectorAll('#bark-mode-seg button').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === mode);
+    });
+  }
+  document.querySelectorAll('#bark-mode-seg button').forEach(btn => {
+    btn.addEventListener('click', () => setBarkMode(btn.dataset.mode));
+  });
+  // 从 localStorage 恢复按钮 active 状态 (默认 template)
+  (function restoreBarkMode() {
+    let saved = 'template';
+    try { saved = localStorage.getItem('npc_bark_mode') || 'template'; } catch (e) {}
+    document.querySelectorAll('#bark-mode-seg button').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === saved);
+    });
+  })();
 
   // -------- 横屏按钮 (两处都绑定到同一个 toggleLandscapeMode) --------
   const landscapeHandler = (ev) => toggleLandscapeMode(ev.currentTarget);

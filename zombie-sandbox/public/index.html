@@ -255,6 +255,30 @@
       color: var(--black);
       border-color: var(--red);
     }
+    /* NPC 台词模式切换 (segmented control: OFF / TPL / LLM) */
+    .bark-seg {
+      display: inline-flex;
+      border: 1px solid var(--line-2);
+      background: var(--black);
+    }
+    .bark-seg button {
+      padding: 6px 8px;
+      border: none;
+      background: var(--black);
+      color: var(--muted);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 10px;
+      letter-spacing: 0.05em;
+      transition: color 0.12s, background 0.12s;
+      -webkit-user-select: none;
+    }
+    .bark-seg button + button { border-left: 1px solid var(--line-2); }
+    .bark-seg button:active { transform: scale(0.97); }
+    .bark-seg button.active { background: var(--green-dark); color: #fff; }
+    .bark-seg button.active[data-mode="off"]  { background: var(--line-2); color: var(--text); }
+    .bark-seg button.active[data-mode="llm"]  { background: #1e3a5f; color: #93c5fd; }
+
     /* 横屏全屏按钮 (移动端高亮) */
     .control-btn.landscape {
       border-color: var(--green-dark);
@@ -755,6 +779,15 @@
       <button class="control-btn" id="btn-resetview" title="重置视角 (R / Home)">&#127919; <span>VIEW</span></button>
       <button class="control-btn danger" id="btn-clear">&#215; <span>CLEAR</span></button>
       <button class="control-btn danger" id="btn-clear-zombies">&#9760; <span>PURGE</span></button>
+    </div>
+    <div class="divider"></div>
+    <div class="tool-group">
+      <span class="tool-group-label">NPC</span>
+      <div class="bark-seg" id="bark-mode-seg">
+        <button data-mode="off" title="关闭所有 NPC 台词">OFF</button>
+        <button data-mode="template" title="仅用模板台词 (默认, 0 延迟)">TPL</button>
+        <button data-mode="llm" title="模板 + 本地 0.5B 小模型增强台词">LLM</button>
+      </div>
     </div>
   </div>
 

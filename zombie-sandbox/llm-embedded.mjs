@@ -11,7 +11,7 @@
 //     const r = await embedded.chat({ messages, temperature, maxTokens });
 //   }
 
-import { getLlama, LlamaChatSession, ChatMLChatWrapper } from 'node-llama-cpp';
+import { getLlama, LlamaChatSession } from 'node-llama-cpp';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -118,17 +118,25 @@ async function ensureLoaded() {
       const t0 = Date.now();
       _llama = await getLlama();
       _model = await _llama.loadModel({ modelPath: MODEL_PATH });
-      // 每次会话复用, systemPrompt 在 chat() 时传
+      // ===== 手机 (Termux) 适配: 默认调小 context + threads =====
+      // 2048 ctx + 3 threads 在 4-6GB 内存手机上很容易 OOM 导致 decode 全是垃圾 tokens
+      const defaultCtx = Math.min(parseInt(process.env.LLM_CONTEXT || '1024', 10), 2048);
+      // os.cpus() 在手机上可能返回 8 核 (4小+4大), 但只跑 2 线程最稳
+      const defaultThreads = Math.min(parseInt(process.env.LLM_THREADS || '2', 10), 4);
       const ctx = await _model.createContext({
-        contextSize: parseInt(process.env.LLM_CONTEXT || '2048', 10),
-        threads: parseInt(process.env.LLM_THREADS || '3', 10),
+        contextSize: defaultCtx,
+        threads: defaultThreads,
       });
       const seq = ctx.getSequence();
+      // ===== 关键: 不传 chatWrapper, 让 GGUF 文件自带的 chat_template 自动生效 =====
+      // Qwen2.5 的 GGUF 里已经内置了 <|im_start|>/<|im_end|> chat template 元数据,
+      // 强制塞 ChatMLChatWrapper 反而会与 control token override 冲突,
+      // 表现为 decode 出来全是同一个奇怪字符 (你截图里的 @@@... 就是这个症状)
       _session = new LlamaChatSession({
         contextSequence: seq,
-        chatWrapper: new ChatMLChatWrapper(),
+        // chatWrapper: undefined → node-llama-cpp 自动从 GGUF 元数据加载
       });
-      console.log(`[llm-embedded] 模型就绪 (${((Date.now()-t0)/1000).toFixed(1)}s)`);
+      console.log(`[llm-embedded] 模型就绪 (${((Date.now()-t0)/1000).toFixed(1)}s) ctx=${defaultCtx} threads=${defaultThreads}`);
       return _session;
     })().catch(e => {
       console.error('[llm-embedded] 加载失败:', e.message);
@@ -141,6 +149,46 @@ async function ensureLoaded() {
 }
 
 // ===== 推理 API (与 server.js 的 /api/llm/chat 兼容) =====
+// 对字符串做 UTF-8 保真清洗: 如果 node-llama-cpp 内部 decode 出了垃圾字节,
+// 这里兜底把无效 UTF-8 替换字符和孤立代理项清掉, 避免传给前端一团 @
+function _sanitizeDecodedText(s) {
+  if (!s || typeof s !== 'string') return '';
+  // 1) 通过 Buffer 绕一圈: 字符串 → UTF-8 字节 → 重新 UTF-8 decode (fatal=false 会把坏字节清掉)
+  //    能处理 node-llama-cpp 内部因为 OOM / 表错乱 decode 出的"伪字符串里混着坏字节"
+  try {
+    const buf = Buffer.from(s, 'utf8');
+    s = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+  } catch (_) {}
+  // 2) 去掉替换字符、孤立代理项、控制字符
+  s = s
+    .replace(/\uFFFD/g, '')
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+  // 3) 垃圾检测: 如果是同一个字符重复 10+ 次 (典型 OOM decode 垃圾), 直接丢弃
+  if (s.length >= 20) {
+    const first = s[0];
+    let same = true;
+    for (const ch of s) { if (ch !== first) { same = false; break; } }
+    if (same) return '';
+  }
+  // 4) 如果可打印字符占比太低 (<60%), 也丢弃
+  let printable = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0);
+    if (!cp) continue;
+    // 普通可打印 ASCII + CJK 汉字/标点 + 常见符号
+    if ((cp >= 0x20 && cp <= 0x7e) ||
+        (cp >= 0x3000 && cp <= 0x303f) ||
+        (cp >= 0x4e00 && cp <= 0x9fff) ||
+        (cp >= 0xff00 && cp <= 0xffef) ||
+        cp === 0xa || cp === 0xd || cp === 0x9) {
+      printable++;
+    }
+  }
+  if (s.length > 0 && printable / s.length < 0.6) return '';
+  return s;
+}
+
 export async function chat({ messages, temperature = 0.9, maxTokens = 40 }) {
   if (!_available) throw new Error('embedded LLM not available');
   const session = await ensureLoaded();
@@ -150,39 +198,26 @@ export async function chat({ messages, temperature = 0.9, maxTokens = 40 }) {
   const userMsgs = messages.filter(m => m.role === 'user');
   const userText = userMsgs.map(m => m.content).join('\n');
 
-  // 关键修复: 每次 bark 都用全新的 sequence, 不复用上一轮的 tokens, 防止角色串话/上下文污染
-  const ctx = _model ? await _model.createContext({
-    contextSize: parseInt(process.env.LLM_CONTEXT || '2048', 10),
-    threads: parseInt(process.env.LLM_THREADS || '3', 10),
-  }) : null;
-  if (ctx) {
-    const seq = ctx.getSequence();
-    const { LlamaChatSession, ChatMLChatWrapper } = await import('node-llama-cpp');
-    const freshSession = new LlamaChatSession({
-      contextSequence: seq,
-      chatWrapper: new ChatMLChatWrapper(),
-    });
-    try {
-      const resp = await freshSession.prompt(userText, {
-        systemPrompt: sysMsg ? sysMsg.content : '',
-        maxTokens: Math.min(maxTokens, 48),
-        temperature,
-      });
-      return resp;
-    } finally {
-      // 释放临时上下文, 避免内存暴涨
-      try { await ctx.dispose(); } catch (_) {}
-    }
+  // ===== 手机内存适配: 回退到单例 session, 每次调用前清 history =====
+  // 不新建 context 避免反复分配 KV cache → OOM → decode 成 @@@@
+  if (session && typeof session.reset === 'function') {
+    try { await session.reset(); } catch (_) {}
+  }
+  if (session && Array.isArray(session.history)) {
+    session.history = [];
+  } else if (session && session.sequence && typeof session.sequence.clear === 'function') {
+    try { session.sequence.clear(); } catch (_) {}
   }
 
-  // Fallback 到单例 session (兜底, 尽量不用)
-  if (session && session.history) session.history = [];
   const resp = await session.prompt(userText, {
     systemPrompt: sysMsg ? sysMsg.content : '',
     maxTokens: Math.min(maxTokens, 48),
     temperature,
   });
-  return resp;
+
+  // 后端先做一层清洗: 如果模型/内存层面已经 decode 成垃圾, 这里就拦掉, 不污染前端
+  const clean = _sanitizeDecodedText(resp);
+  return clean;
 }
 
 export function isAvailable() { return _available; }

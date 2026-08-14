@@ -150,14 +150,36 @@ export async function chat({ messages, temperature = 0.9, maxTokens = 40 }) {
   const userMsgs = messages.filter(m => m.role === 'user');
   const userText = userMsgs.map(m => m.content).join('\n');
 
-  // 复用 session 时, 上一轮的对话还在历史里 - 为了让每次 bark 独立, 调用前清空历史
-  if (session.history && session.history.length > 0) {
-    session.history = [];
+  // 关键修复: 每次 bark 都用全新的 sequence, 不复用上一轮的 tokens, 防止角色串话/上下文污染
+  const ctx = _model ? await _model.createContext({
+    contextSize: parseInt(process.env.LLM_CONTEXT || '2048', 10),
+    threads: parseInt(process.env.LLM_THREADS || '3', 10),
+  }) : null;
+  if (ctx) {
+    const seq = ctx.getSequence();
+    const { LlamaChatSession, ChatMLChatWrapper } = await import('node-llama-cpp');
+    const freshSession = new LlamaChatSession({
+      contextSequence: seq,
+      chatWrapper: new ChatMLChatWrapper(),
+    });
+    try {
+      const resp = await freshSession.prompt(userText, {
+        systemPrompt: sysMsg ? sysMsg.content : '',
+        maxTokens: Math.min(maxTokens, 48),
+        temperature,
+      });
+      return resp;
+    } finally {
+      // 释放临时上下文, 避免内存暴涨
+      try { await ctx.dispose(); } catch (_) {}
+    }
   }
 
+  // Fallback 到单例 session (兜底, 尽量不用)
+  if (session && session.history) session.history = [];
   const resp = await session.prompt(userText, {
     systemPrompt: sysMsg ? sysMsg.content : '',
-    maxTokens,
+    maxTokens: Math.min(maxTokens, 48),
     temperature,
   });
   return resp;

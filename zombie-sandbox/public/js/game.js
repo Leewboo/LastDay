@@ -259,17 +259,8 @@ class BarkSystem {
       });
       const data = await resp.json();
       if (data.ok && data.content) {
-        // 尝试解析 JSON
-        let bark = '';
-        try {
-          const parsed = JSON.parse(data.content);
-          bark = parsed.bark || '';
-        } catch (e) {
-          // 如果不是合法 JSON, 直接用 content 作为文本 (截断到 20 字)
-          bark = data.content.trim().slice(0, 20);
-        }
-        if (bark && bark.length > 0 && bark.length <= 30) {
-          // 如果 NPC 还活着且气泡还在, 更新文本
+        const bark = this._extractBarkText(data.content);
+        if (bark && bark.length >= 1 && bark.length <= 25) {
           if (!ent.isDead) this._showBubble(ent, bark, true);
         }
       }
@@ -278,6 +269,57 @@ class BarkSystem {
     } finally {
       this.pendingCount--;
     }
+  }
+
+  // 从 LLM 返回的各种奇怪格式里, 尽量稳健地提取 bark 纯文本
+  _extractBarkText(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    // 1) 先清掉前后空白
+    let s = raw.trim();
+    // 2) 如果外面包了 JSON 代码块 ```json ... ```
+    s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    // 3) 尝试找第一个合法 JSON 对象并解析 bark 字段
+    let bark = '';
+    const jsonMatch = s.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed && typeof parsed.bark === 'string' && parsed.bark.trim()) {
+          bark = parsed.bark.trim();
+        }
+      } catch (e) {
+        // 再试: 手动抓 "bark":"xxx"
+        const m = jsonMatch[0].match(/"bark"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        if (m) {
+          try { bark = JSON.parse('"' + m[1] + '"'); } catch (_) { bark = m[1]; }
+        }
+      }
+    }
+    // 4) JSON 没捞到, 用纯文本兜底: 去掉 JSON 残留符号, 只取第一行短文本
+    if (!bark) {
+      bark = s
+        .replace(/\{[\s\S]*$/g, '')         // 切掉 { ... }
+        .replace(/^[\s\S]*?\}/, '')          // 如果前面也有 } 残留
+        .replace(/["{}[\]:,]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      // 中文优先: 只保留第一个 CJK 短句 (≤25 字)
+      const cn = bark.match(/[\u4e00-\u9fa5，。！？、；：""''（）\w]{1,25}/);
+      if (cn) bark = cn[0].trim();
+      else bark = bark.slice(0, 25);
+    }
+    // 5) 清洗尾部不完整的 JSON 残片
+    bark = bark.replace(/\s*[{\[].*$/s, '').trim();
+    // 6) 过滤含大量 ASCII 代码点的乱码 (正常中文台词 CJK 占比 > 50%)
+    let cjk = 0;
+    for (const ch of bark) {
+      const cp = ch.codePointAt(0);
+      if (cp >= 0x4e00 && cp <= 0x9fff) cjk++;
+    }
+    if (bark.length > 0 && cjk / bark.length < 0.3) {
+      return ''; // 判定为乱码, 不更新气泡, 保留模板即可
+    }
+    return bark.slice(0, 25);
   }
 
   // 构建给 LLM 的情况描述
@@ -302,34 +344,50 @@ class BarkSystem {
   // 显示/更新气泡文本
   _showBubble(ent, text, isUpdate = false) {
     if (!ent.sprite || ent.isDead) return;
+    // 文本安全清洗: 去控制字符, 防乱码
+    let cleanText = (text || '').toString()
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+      .replace(/\uFFFD/g, '') // Unicode 替换字符 (解码失败的豆腐块)
+      .trim();
+    if (!cleanText) return;
+
     // 计算气泡位置: 人物视觉头顶上方
     const px = ent.cfg.aabbPxSrc;
     const scale = ent.cfg.displayH / ent.cfg.frameH;
     const visualTopY = ent.sprite.y - scale * (ent.cfg.frameH - px.top);
     const bubbleY = visualTopY - 28;
 
+    // 字体: CJK 优先系统中文黑体, 保证中文不糊不乱码
+    const FONT_FAMILY = [
+      '"Noto Sans CJK SC"', '"Source Han Sans CN"', '"PingFang SC"',
+      '"Microsoft YaHei"', '"Hiragino Sans GB"', '"Heiti SC"',
+      '"WenQuanYi Zen Hei"', 'sans-serif',
+      'JetBrains Mono', 'Menlo', 'monospace',
+    ].join(', ');
+
     // 如果已有气泡且是更新, 直接改文本
     if (isUpdate && ent._bubble) {
-      ent._bubble.setText(text);
+      ent._bubble.setText(cleanText);
       ent._bubble.setPosition(ent.sprite.x, bubbleY);
-      ent._bubble._ttl = 2500; // 刷新 TTL
+      ent._bubble._ttl = 2500;
       return;
     }
 
     // 创建新气泡
     if (!ent._bubble) {
-      ent._bubble = this.scene.add.text(ent.sprite.x, bubbleY, text, {
-        fontFamily: 'JetBrains Mono, Menlo, monospace',
-        fontSize: '16px',
+      ent._bubble = this.scene.add.text(ent.sprite.x, bubbleY, cleanText, {
+        fontFamily: FONT_FAMILY,
+        fontSize: '17px',
         fontStyle: 'bold',
         color: '#ffffff',
-        backgroundColor: 'rgba(10,10,10,0.85)',
-        padding: { x: 7, y: 3 },
+        backgroundColor: 'rgba(10,10,10,0.88)',
+        padding: { x: 9, y: 4 },
         stroke: '#000000',
         strokeThickness: 3,
+        align: 'center',
       }).setOrigin(0.5, 1.0).setDepth(50);
     } else {
-      ent._bubble.setText(text);
+      ent._bubble.setText(cleanText);
       ent._bubble.setPosition(ent.sprite.x, bubbleY);
       ent._bubble.setVisible(true);
     }

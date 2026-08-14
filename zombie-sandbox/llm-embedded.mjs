@@ -52,7 +52,56 @@ function findGgufModel() {
   return null;
 }
 
-const MODEL_PATH = findGgufModel();
+// ===== GGUF 文件完整性检查 (防止下一半就拿上来加载) =====
+// 参考 GGUF v3 格式: magic(4) + version(4) + tensor_count(8) + metadata_kv_count(8) + ... + tensor_data_offset(8)
+// 最小有效文件: 至少有 header + 1 个 tensor 偏移, 不可能 < 200MB (0.5B q4_k 最小约 200MB)
+const MIN_GGUF_SIZE = 150 * 1024 * 1024; // 150MB 兜底
+
+function validateGguf(p) {
+  if (!p || !fs.existsSync(p)) return { ok: false, reason: '文件不存在' };
+  const stat = fs.statSync(p);
+  if (stat.size < MIN_GGUF_SIZE) {
+    return { ok: false, reason: `文件太小 (${(stat.size/1024/1024).toFixed(1)}MB < 150MB), 下载未完成或不是完整模型` };
+  }
+  const fd = fs.openSync(p, 'r');
+  try {
+    const header = Buffer.alloc(32);
+    const n = fs.readSync(fd, header, 0, 32, 0);
+    if (n < 8) return { ok: false, reason: 'header 不足 8 字节, 文件损坏' };
+    const magic = header.slice(0, 4).toString();
+    if (magic !== 'GGUF') return { ok: false, reason: `魔数错误: "${magic}" !== "GGUF", 文件不是 GGUF 格式或下坏了` };
+    const version = header.readUInt32LE(4);
+    if (version < 2 || version > 5) return { ok: false, reason: `GGUF 版本异常: ${version}` };
+    // 校验尾部字节: 读最后 4 字节, 确保文件是完整的 (非中断下载)
+    const tail = Buffer.alloc(4);
+    fs.readSync(fd, tail, 0, 4, Math.max(0, stat.size - 4));
+    // 尾部不全是 0x00 (中断下载的典型表现是 trailing zeros 或被截断)
+    let nonZero = 0;
+    for (let i = 0; i < 4; i++) if (tail[i] !== 0) nonZero++;
+    if (nonZero === 0) {
+      return { ok: false, reason: '文件尾部全为 0, 大概率是下载中断。删掉重下 aria2c -x16 -s16 -c ...' };
+    }
+    return { ok: true, sizeMB: (stat.size / 1024 / 1024).toFixed(1), version };
+  } catch (e) {
+    return { ok: false, reason: `读文件失败: ${e.message}` };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+let MODEL_PATH = findGgufModel();
+let _modelValidation = MODEL_PATH ? validateGguf(MODEL_PATH) : null;
+
+if (MODEL_PATH && !_modelValidation.ok) {
+  console.error(`\n[llm-embedded] ⚠️  模型文件无效: ${MODEL_PATH}`);
+  console.error(`[llm-embedded]    原因: ${_modelValidation.reason}`);
+  console.error(`[llm-embedded]    修复: rm ${MODEL_PATH}`);
+  console.error(`[llm-embedded]         aria2c -x 16 -s 16 -k 1M -c -o qwen2.5-0.5b.gguf \\`);
+  console.error(`[llm-embedded]           "https://hf-mirror.com/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"\n`);
+  MODEL_PATH = null;
+} else if (MODEL_PATH) {
+  console.log(`[llm-embedded] GGUF 校验通过: ${_modelValidation.sizeMB}MB, version ${_modelValidation.version}`);
+}
 
 // ===== 单例: 模型只加载一次, session 复用 =====
 let _llama = null;

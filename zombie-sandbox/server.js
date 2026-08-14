@@ -96,10 +96,17 @@ app.get('/', (req, res) => {
 const http = require('http');
 
 // 可配置的本地 LLM 后端列表 (按优先级尝试)
+// 支持环境变量 LLM_HOST / LLM_PORT 指向远程机器 (例如 Termux 跑游戏, 电脑跑 Ollama)
+const _llmHost = process.env.LLM_HOST || '127.0.0.1';
+const _llmOllamaPort = parseInt(process.env.LLM_PORT || '11434', 10);
+const _llmLlamaPort = parseInt(process.env.LLM_LLAMA_PORT || '8080', 10);
 const LLM_BACKENDS = [
-  { name: 'ollama',       host: '127.0.0.1', port: 11434, path: '/api/chat',    type: 'ollama' },
-  { name: 'llama-server', host: '127.0.0.1', port: 8080,  path: '/v1/chat/completions', type: 'openai' },
+  { name: 'ollama',       host: _llmHost, port: _llmOllamaPort, path: '/api/chat',    type: 'ollama' },
+  { name: 'llama-server', host: _llmHost, port: _llmLlamaPort,  path: '/v1/chat/completions', type: 'openai' },
 ];
+if (process.env.LLM_HOST) {
+  console.log(`[LLM] 远程后端模式: ${_llmHost}:${_llmOllamaPort}(ollama) / :${_llmLlamaPort}(llama-server)`);
+}
 
 // 缓存: 哪个后端可用 (避免每次都探测)
 let _activeBackend = null;

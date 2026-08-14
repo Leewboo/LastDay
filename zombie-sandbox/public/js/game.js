@@ -91,6 +91,8 @@ const ENTITY_CONFIG = {
 };
 
 // ---------- NPC 个性 & 台词模板 ----------
+// 说明: 对 0.3B/0.5B 这种手机端小模型, 不要强制 JSON 输出 (最容易乱码/@@@).
+//       system prompt 改成"直接说一句话, 不要引号/不要JSON", 模型负担最小, 成功率最高.
 const NPC_PERSONALITY = {
   survivor_male: {
     traits: ['勇敢', '警觉', '偶尔幽默'],
@@ -105,8 +107,8 @@ const NPC_PERSONALITY = {
       idle:      ['...', '还好', '安全吗?', '得找点物资', '这一天什么时候是头'],
       teammateDied: ['不!', '兄弟!', '快跑!', '又一个...'],
     },
-    // LLM system prompt (当 LLM 后端可用时, 0.5B 小模型也只需要生成 1 句话)
-    llmSystem: '你是一个在末日丧尸世界中求生的勇敢男性幸存者。根据当前情况说一句简短的中文台词(不超过15字)。只输出JSON: {"bark":"台词"}'
+    // 0.3B 模型最稳的 prompt: 直接要"一句话", 禁止 JSON/引号/代码块
+    llmSystem: '你是末日丧尸世界里的勇敢男性幸存者。请根据当前情况，直接说一句简短中文台词，不超过12个字。不要输出JSON，不要加引号，不要任何多余格式，只要台词本身。'
   },
   survivor_female: {
     traits: ['机敏', '冷静', '偶尔吐槽'],
@@ -120,7 +122,7 @@ const NPC_PERSONALITY = {
       idle:      ['...', '安静', '保持警惕', '别松懈'],
       teammateDied: ['不!', '快走!', '别停下来!'],
     },
-    llmSystem: '你是一个在末日丧尸世界中求生的机敏女性幸存者。根据当前情况说一句简短的中文台词(不超过15字)。只输出JSON: {"bark":"台词"}'
+    llmSystem: '你是末日丧尸世界里的机敏女性幸存者。请根据当前情况，直接说一句简短中文台词，不超过12个字。不要输出JSON，不要加引号，不要任何多余格式，只要台词本身。'
   },
   zombie_normal: {
     traits: ['迟缓', '嗜血', '低智'],
@@ -131,7 +133,7 @@ const NPC_PERSONALITY = {
       idle:      ['嗯...', '肉...', '饿...', '呃...'],
       death:     ['呃...', '...'],
     },
-    llmSystem: '你是一个迟缓的丧尸。只会发出简单的呻吟或单字。根据情况输出JSON: {"bark":"1-4字呻吟"}'
+    llmSystem: '你是一个迟缓的丧尸。根据情况，只用1到4个字发出简单的呻吟或嘶吼。不要输出JSON，不要任何格式，只要那几个字。'
   },
   zombie_fast: {
     traits: ['狂躁', '迅捷', '暴躁'],
@@ -142,7 +144,7 @@ const NPC_PERSONALITY = {
       idle:      ['嗷...', '吼...', '肉...'],
       death:     ['嗷...', '呃...'],
     },
-    llmSystem: '你是一个狂躁的快速丧尸。只会发出暴躁的嘶吼。根据情况输出JSON: {"bark":"1-4字嘶吼"}'
+    llmSystem: '你是一个狂躁的快速丧尸。根据情况，只用1到4个字发出暴躁的嘶吼。不要输出JSON，不要任何格式，只要那几个字。'
   },
   zombie_tank: {
     traits: ['巨大', '笨重', '毁灭性'],
@@ -153,7 +155,7 @@ const NPC_PERSONALITY = {
       idle:      ['嗯...', '肉...', '吼...'],
       death:     ['吼......', '嗯......'],
     },
-    llmSystem: '你是一个巨大的坦克丧尸。发出低沉的咆哮。根据情况输出JSON: {"bark":"1-5字低吼"}'
+    llmSystem: '你是一个巨大的坦克丧尸。根据情况，只用1到5个字发出低沉的咆哮。不要输出JSON，不要任何格式，只要那几个字。'
   }
 };
 
@@ -248,9 +250,12 @@ class BarkSystem {
     try {
       // 构建上下文描述
       const situation = this._buildSituationDesc(ent, event, context);
+      // ===== 适配 0.3B/0.5B 手机端小模型: 不再要求输出 JSON, 只要纯中文短句 =====
+      // 0.3B 模型根本没有能力稳定输出合法 JSON (很容易死循环成 @@@ 乱码),
+      // 改成"直接说一句话" + 前端清洗判断, 成功率最高
       const messages = [
         { role: 'system', content: personality.llmSystem },
-        { role: 'user', content: `情况: ${situation}\n输出JSON: {"bark":"台词"}` }
+        { role: 'user', content: `情况: ${situation}\n请直接说一句台词:` }
       ];
       const resp = await fetch('/api/llm/chat', {
         method: 'POST',
@@ -258,16 +263,18 @@ class BarkSystem {
           'Content-Type': 'application/json; charset=utf-8',
           'Accept': 'application/json; charset=utf-8',
         },
-        body: JSON.stringify({ messages, temperature: 0.9, maxTokens: 40 })
+        // maxTokens 调小: 最多 32 tokens (一句话足够了), 手机端 decode 越短越稳
+        body: JSON.stringify({ messages, temperature: 0.9, maxTokens: 32 })
       });
-      // 关键修复: 强制按 ArrayBuffer + 手动 UTF-8 解码, 绕开浏览器的编码猜测
+      // 强制按 ArrayBuffer + 手动 UTF-8 解码
       const buf = await resp.arrayBuffer();
       const text = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buf));
       console.log('[Bark] HTTP raw bytes decoded:', JSON.stringify(text));
       const data = JSON.parse(text);
       if (data.ok && data.content) {
         const bark = this._extractBarkText(data.content);
-        if (bark && bark.length >= 1 && bark.length <= 25) {
+        // ===== 放宽成功条件: 长度下限改成 1 字 (丧尸呻吟"吼"就合法) =====
+        if (bark && bark.length >= 1 && bark.length <= 20) {
           if (!ent.isDead) this._showBubble(ent, bark, true);
         }
       }
@@ -288,72 +295,86 @@ class BarkSystem {
     // 1) 先清掉前后空白
     let s = raw.trim();
 
-    // 2) 关键修复: 反转义字面的 \uXXXX 序列 (0.5B 小模型经常直接输出 "\u4f60\u597d" 这种字面字符串, 而不是真正的 Unicode)
-    //    先转 \uXXXX
+    // 2) 反转义字面的 \uXXXX / \UXXXXXXXX 序列 (小模型常见)
     s = s.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-    //    再转 \UXXXXXXXX (如果有)
     s = s.replace(/\\U([0-9a-fA-F]{8})/g, (_, hex) => {
       const cp = parseInt(hex, 16);
       return cp > 0xFFFF ? String.fromCodePoint(cp) : String.fromCharCode(cp);
     });
-    //    再转 \n \r \t \" 等常见转义
+    // 反转义常见 JSON 字符串字面转义
     try {
-      // 如果整段是被双引号包着的 JSON string literal, 直接用 JSON.parse 解
-      if (/^"[\s\S]*"$/.test(s)) {
-        s = JSON.parse(s);
-      }
+      if (/^"[\s\S]*"$/.test(s)) s = JSON.parse(s);
     } catch (_) {}
-    // 兜底: 手动解常见转义 (不抛错)
     s = s.replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t').replace(/\\\\/g, '\\');
 
-    // 3) 如果外面包了 JSON 代码块 ```json ... ```
+    // 3) 如果外面包了 ```json / ``` / ` 代码块, 剥掉
     s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    s = s.replace(/^`+|`+$/g, '').trim();
 
-    // 4) 尝试找第一个合法 JSON 对象并解析 bark 字段
+    // 4) 现在 prompt 不再强制 JSON, 优先按"纯文本短句"提取, 再兜底抓 JSON
     let bark = '';
-    const jsonMatch = s.match(/\{[\s\S]*?\}/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed && typeof parsed.bark === 'string' && parsed.bark.trim()) {
-          bark = parsed.bark.trim();
-        }
-      } catch (e) {
-        // 再试: 手动抓 "bark":"xxx"
-        const m = jsonMatch[0].match(/"bark"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        if (m) {
-          try { bark = JSON.parse('"' + m[1] + '"'); } catch (_) {
-            // 手动反转义 \uXXXX
-            bark = m[1].replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    // 4.1 先抓纯文本: 取第一行非空行, 去掉前后引号/标点套壳
+    const firstLine = s.split(/\r?\n/).map(l => l.trim()).find(l => l.length > 0) || '';
+    if (firstLine) {
+      bark = firstLine
+        .replace(/^[""'']+/, '').replace(/[""'']+$/, '')          // 剥掉前后引号
+        .replace(/^bark\s*[:：]\s*/i, '')                         // 去掉 "bark: xxx" 前缀
+        .replace(/^[（(]\s*台词\s*[)）]\s*[:：]?\s*/i, '')        // 去掉 "(台词): xxx" 前缀
+        .replace(/^[一-龥a-zA-Z]+\s*[:：]\s*/, '')                // 去掉 "男幸存者: xxx" 前缀
+        .trim();
+      // 如果第一行里还带 { , 就先切了再看
+      const braceIdx = bark.indexOf('{');
+      if (braceIdx > 0) bark = bark.slice(0, braceIdx).trim();
+      const endBrace = bark.indexOf('}');
+      if (endBrace >= 0 && !bark.includes('{')) bark = bark.slice(0, endBrace).trim();
+    }
+
+    // 4.2 如果纯文本捞出来空/太离谱, 再兜底尝试 JSON (兼容模型偶尔还是吐 JSON 的情况)
+    if (!bark || bark.length < 1) {
+      const jsonMatch = s.match(/\{[\s\S]*?\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed && typeof parsed.bark === 'string' && parsed.bark.trim()) {
+            bark = parsed.bark.trim();
+          } else if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) {
+            bark = parsed.text.trim();
+          }
+        } catch (e) {
+          const m = jsonMatch[0].match(/"(bark|text|content)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          if (m) {
+            try { bark = JSON.parse('"' + m[2] + '"'); } catch (_) {
+              bark = m[2].replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+            }
           }
         }
       }
     }
 
-    // 5) JSON 没捞到, 用纯文本兜底: 去掉 JSON 残留符号, 只取第一行短文本
+    // 5) 还是没有 → 拿整段粗暴去符号兜底
     if (!bark) {
       bark = s
-        .replace(/\{[\s\S]*$/g, '')         // 切掉 { ... }
-        .replace(/^[\s\S]*?\}/, '')          // 如果前面也有 } 残留
+        .replace(/\{[\s\S]*$/g, '')
+        .replace(/^[\s\S]*?\}/, '')
         .replace(/["{}[\]:,]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-      // 中文优先: 只保留第一个 CJK 短句 (≤25 字), 含中文标点
-      const cn = bark.match(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef，。！？、；：""''（）《》【】\w]{1,25}/);
+      const cn = bark.match(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef，。！？、；：""''（）《》【】\w]{1,20}/);
       if (cn) bark = cn[0].trim();
-      else bark = bark.slice(0, 25);
+      else bark = bark.slice(0, 20);
     }
 
-    // 6) 清洗尾部不完整的 JSON 残片
+    // 6) 清洗尾部不完整的 JSON 残片 + 首尾空白/引号
     bark = bark.replace(/\s*[{\[].*$/s, '').trim();
+    bark = bark.replace(/^["'\s]+|["'\s]+$/g, '');
 
-    // 7) 增强的乱码过滤:
-    //    a) 去掉 Unicode 替换字符 � 和代理项对异常
-    bark = bark.replace(/\uFFFD/g, '').replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
-    //    b) 去掉控制字符 (除了常见空白)
-    bark = bark.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+    // 7) Unicode 级别清洗: 去替换字符/孤立代理项/控制字符
+    bark = bark
+      .replace(/\uFFFD/g, '')
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 
-    //    c) 智能 CJK 判定: 统计 CJK 统一汉字 + CJK 标点 + 全角字符
+    // 8) 智能 CJK 判定 + 乱码丢弃
     if (bark.length > 0) {
       let cjkCount = 0;
       let totalCount = 0;
@@ -361,32 +382,23 @@ class BarkSystem {
         const cp = ch.codePointAt(0);
         totalCount++;
         if (!cp) continue;
-        // CJK 统一汉字 (基本+扩展A) + 兼容表意文字
-        if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0xf900 && cp <= 0xfaff)) {
-          cjkCount++;
-        }
-        // CJK 标点符号 (3000-303F) + 全角 ASCII 对应 (FF00-FFEF)
-        else if ((cp >= 0x3000 && cp <= 0x303f) || (cp >= 0xff00 && cp <= 0xffef)) {
-          cjkCount++;
-        }
+        if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0xf900 && cp <= 0xfaff)) cjkCount++;
+        else if ((cp >= 0x3000 && cp <= 0x303f) || (cp >= 0xff00 && cp <= 0xffef)) cjkCount++;
       }
-      // 僵尸的台词可以很短 (1-4 字呻吟), 所以降低阈值: 只要有至少 1 个 CJK 字符或者长度<=3 就放行
       const ratio = totalCount > 0 ? cjkCount / totalCount : 0;
-      const isShortMoan = totalCount <= 4 && cjkCount >= 1; // 丧尸短呻吟
+      const isShortMoan = totalCount <= 4 && cjkCount >= 1;
       const hasCjk = cjkCount >= 1;
       if (totalCount > 0 && !isShortMoan && !hasCjk) {
-        // 完全没有 CJK 的, 认为是乱码 (例如模型吐出一堆英文/ASCII 垃圾)
         console.log('[Bark] 过滤: 无 CJK 字符, 保留模板');
         return '';
       }
-      if (totalCount > 6 && ratio < 0.4) {
-        // 长文本但 CJK 不足 40%, 判定乱码
+      if (totalCount > 5 && ratio < 0.4) {
         console.log('[Bark] 过滤: CJK 占比过低, ratio=', ratio.toFixed(2));
         return '';
       }
     }
 
-    const final = bark.slice(0, 25).trim();
+    const final = bark.slice(0, 20).trim();
     console.log('[Bark] final extracted:', JSON.stringify(final));
     return final;
   }

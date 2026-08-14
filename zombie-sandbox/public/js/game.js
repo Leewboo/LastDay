@@ -254,10 +254,17 @@ class BarkSystem {
       ];
       const resp = await fetch('/api/llm/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Accept': 'application/json; charset=utf-8',
+        },
         body: JSON.stringify({ messages, temperature: 0.9, maxTokens: 40 })
       });
-      const data = await resp.json();
+      // 关键修复: 强制按 ArrayBuffer + 手动 UTF-8 解码, 绕开浏览器的编码猜测
+      const buf = await resp.arrayBuffer();
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buf));
+      console.log('[Bark] HTTP raw bytes decoded:', JSON.stringify(text));
+      const data = JSON.parse(text);
       if (data.ok && data.content) {
         const bark = this._extractBarkText(data.content);
         if (bark && bark.length >= 1 && bark.length <= 25) {
@@ -265,6 +272,7 @@ class BarkSystem {
         }
       }
     } catch (e) {
+      console.warn('[Bark] LLM 请求失败:', e.message);
       // 静默失败, 模板已经显示了
     } finally {
       this.pendingCount--;
@@ -274,11 +282,34 @@ class BarkSystem {
   // 从 LLM 返回的各种奇怪格式里, 尽量稳健地提取 bark 纯文本
   _extractBarkText(raw) {
     if (!raw || typeof raw !== 'string') return '';
+    // 调试: 把原始内容打印到控制台 (方便排查乱码)
+    console.log('[Bark] LLM raw input:', JSON.stringify(raw));
+
     // 1) 先清掉前后空白
     let s = raw.trim();
-    // 2) 如果外面包了 JSON 代码块 ```json ... ```
+
+    // 2) 关键修复: 反转义字面的 \uXXXX 序列 (0.5B 小模型经常直接输出 "\u4f60\u597d" 这种字面字符串, 而不是真正的 Unicode)
+    //    先转 \uXXXX
+    s = s.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    //    再转 \UXXXXXXXX (如果有)
+    s = s.replace(/\\U([0-9a-fA-F]{8})/g, (_, hex) => {
+      const cp = parseInt(hex, 16);
+      return cp > 0xFFFF ? String.fromCodePoint(cp) : String.fromCharCode(cp);
+    });
+    //    再转 \n \r \t \" 等常见转义
+    try {
+      // 如果整段是被双引号包着的 JSON string literal, 直接用 JSON.parse 解
+      if (/^"[\s\S]*"$/.test(s)) {
+        s = JSON.parse(s);
+      }
+    } catch (_) {}
+    // 兜底: 手动解常见转义 (不抛错)
+    s = s.replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t').replace(/\\\\/g, '\\');
+
+    // 3) 如果外面包了 JSON 代码块 ```json ... ```
     s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-    // 3) 尝试找第一个合法 JSON 对象并解析 bark 字段
+
+    // 4) 尝试找第一个合法 JSON 对象并解析 bark 字段
     let bark = '';
     const jsonMatch = s.match(/\{[\s\S]*?\}/);
     if (jsonMatch) {
@@ -291,11 +322,15 @@ class BarkSystem {
         // 再试: 手动抓 "bark":"xxx"
         const m = jsonMatch[0].match(/"bark"\s*:\s*"((?:[^"\\]|\\.)*)"/);
         if (m) {
-          try { bark = JSON.parse('"' + m[1] + '"'); } catch (_) { bark = m[1]; }
+          try { bark = JSON.parse('"' + m[1] + '"'); } catch (_) {
+            // 手动反转义 \uXXXX
+            bark = m[1].replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+          }
         }
       }
     }
-    // 4) JSON 没捞到, 用纯文本兜底: 去掉 JSON 残留符号, 只取第一行短文本
+
+    // 5) JSON 没捞到, 用纯文本兜底: 去掉 JSON 残留符号, 只取第一行短文本
     if (!bark) {
       bark = s
         .replace(/\{[\s\S]*$/g, '')         // 切掉 { ... }
@@ -303,23 +338,57 @@ class BarkSystem {
         .replace(/["{}[\]:,]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-      // 中文优先: 只保留第一个 CJK 短句 (≤25 字)
-      const cn = bark.match(/[\u4e00-\u9fa5，。！？、；：""''（）\w]{1,25}/);
+      // 中文优先: 只保留第一个 CJK 短句 (≤25 字), 含中文标点
+      const cn = bark.match(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef，。！？、；：""''（）《》【】\w]{1,25}/);
       if (cn) bark = cn[0].trim();
       else bark = bark.slice(0, 25);
     }
-    // 5) 清洗尾部不完整的 JSON 残片
+
+    // 6) 清洗尾部不完整的 JSON 残片
     bark = bark.replace(/\s*[{\[].*$/s, '').trim();
-    // 6) 过滤含大量 ASCII 代码点的乱码 (正常中文台词 CJK 占比 > 50%)
-    let cjk = 0;
-    for (const ch of bark) {
-      const cp = ch.codePointAt(0);
-      if (cp >= 0x4e00 && cp <= 0x9fff) cjk++;
+
+    // 7) 增强的乱码过滤:
+    //    a) 去掉 Unicode 替换字符 � 和代理项对异常
+    bark = bark.replace(/\uFFFD/g, '').replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+    //    b) 去掉控制字符 (除了常见空白)
+    bark = bark.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+
+    //    c) 智能 CJK 判定: 统计 CJK 统一汉字 + CJK 标点 + 全角字符
+    if (bark.length > 0) {
+      let cjkCount = 0;
+      let totalCount = 0;
+      for (const ch of bark) {
+        const cp = ch.codePointAt(0);
+        totalCount++;
+        if (!cp) continue;
+        // CJK 统一汉字 (基本+扩展A) + 兼容表意文字
+        if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0xf900 && cp <= 0xfaff)) {
+          cjkCount++;
+        }
+        // CJK 标点符号 (3000-303F) + 全角 ASCII 对应 (FF00-FFEF)
+        else if ((cp >= 0x3000 && cp <= 0x303f) || (cp >= 0xff00 && cp <= 0xffef)) {
+          cjkCount++;
+        }
+      }
+      // 僵尸的台词可以很短 (1-4 字呻吟), 所以降低阈值: 只要有至少 1 个 CJK 字符或者长度<=3 就放行
+      const ratio = totalCount > 0 ? cjkCount / totalCount : 0;
+      const isShortMoan = totalCount <= 4 && cjkCount >= 1; // 丧尸短呻吟
+      const hasCjk = cjkCount >= 1;
+      if (totalCount > 0 && !isShortMoan && !hasCjk) {
+        // 完全没有 CJK 的, 认为是乱码 (例如模型吐出一堆英文/ASCII 垃圾)
+        console.log('[Bark] 过滤: 无 CJK 字符, 保留模板');
+        return '';
+      }
+      if (totalCount > 6 && ratio < 0.4) {
+        // 长文本但 CJK 不足 40%, 判定乱码
+        console.log('[Bark] 过滤: CJK 占比过低, ratio=', ratio.toFixed(2));
+        return '';
+      }
     }
-    if (bark.length > 0 && cjk / bark.length < 0.3) {
-      return ''; // 判定为乱码, 不更新气泡, 保留模板即可
-    }
-    return bark.slice(0, 25);
+
+    const final = bark.slice(0, 25).trim();
+    console.log('[Bark] final extracted:', JSON.stringify(final));
+    return final;
   }
 
   // 构建给 LLM 的情况描述
@@ -345,11 +414,17 @@ class BarkSystem {
   _showBubble(ent, text, isUpdate = false) {
     if (!ent.sprite || ent.isDead) return;
     // 文本安全清洗: 去控制字符, 防乱码
-    let cleanText = (text || '').toString()
+    let cleanText = (text || '').toString();
+    // Unicode NFC 规范化 (统一合成字形, 避免分解字形渲染成方块)
+    try { cleanText = cleanText.normalize('NFC'); } catch (_) {}
+    cleanText = cleanText
       .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
       .replace(/\uFFFD/g, '') // Unicode 替换字符 (解码失败的豆腐块)
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '') // 孤立代理项
       .trim();
     if (!cleanText) return;
+    console.log(`[Bark] 显示气泡 [${ent.type}] update=${isUpdate}:`, JSON.stringify(cleanText),
+      'bytes=', [...cleanText].map(c => c.codePointAt(0).toString(16)).join(' '));
 
     // 计算气泡位置: 人物视觉头顶上方
     const px = ent.cfg.aabbPxSrc;
@@ -358,11 +433,13 @@ class BarkSystem {
     const bubbleY = visualTopY - 28;
 
     // 字体: CJK 优先系统中文黑体, 保证中文不糊不乱码
+    // 关键: 用 "system-ui" 兜底 (现代浏览器会自动选系统默认中文字体), 其次是通用 sans-serif
     const FONT_FAMILY = [
-      '"Noto Sans CJK SC"', '"Source Han Sans CN"', '"PingFang SC"',
-      '"Microsoft YaHei"', '"Hiragino Sans GB"', '"Heiti SC"',
-      '"WenQuanYi Zen Hei"', 'sans-serif',
-      'JetBrains Mono', 'Menlo', 'monospace',
+      '"PingFang SC"', '"Microsoft YaHei"', '"Hiragino Sans GB"',
+      '"Heiti SC"', '"Source Han Sans CN"', '"Noto Sans CJK SC"',
+      '"WenQuanYi Zen Hei"',
+      'system-ui', '-apple-system', 'BlinkMacSystemFont',
+      'sans-serif', 'serif', 'monospace',
     ].join(', ');
 
     // 如果已有气泡且是更新, 直接改文本
@@ -385,6 +462,7 @@ class BarkSystem {
         stroke: '#000000',
         strokeThickness: 3,
         align: 'center',
+        // 避免 Canvas 2D 某些环境下字形缓存导致的方块, 禁用 wordWrap 简化渲染路径
       }).setOrigin(0.5, 1.0).setDepth(50);
     } else {
       ent._bubble.setText(cleanText);

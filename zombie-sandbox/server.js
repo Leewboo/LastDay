@@ -28,7 +28,25 @@ function cacheStrategy(req, res, next) {
 
 app.use(cacheStrategy);
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json());
+// 显式指定请求体按 UTF-8 解析 (含 inflate)
+app.use(express.json({ limit: '2mb', type: 'application/json', defaultCharset: 'utf-8' }));
+
+// ===== 全局: 强制所有 JSON 响应显式带 charset=utf-8, 避免浏览器/代理误解码 =====
+app.use((req, res, next) => {
+  const origJson = res.json.bind(res);
+  res.json = function (obj) {
+    if (!res.getHeader('Content-Type')) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    } else {
+      const ct = res.getHeader('Content-Type');
+      if (/^application\/json(?!.*charset)/i.test(String(ct))) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      }
+    }
+    return origJson(obj);
+  };
+  next();
+});
 
 // 检查自定义资源目录
 const ASSETS_DIR = path.join(__dirname, 'public', 'assets');
@@ -173,6 +191,9 @@ app.post('/api/llm/chat', async (req, res) => {
     try {
       const content = await _embeddedLlm.chat({ messages, temperature: temperature ?? 0.9, maxTokens: maxTokens ?? 40 });
       if (content) {
+        // 调试日志: 打印 LLM 原始输出
+        console.log(`[LLM][node-llama-cpp] raw=`, JSON.stringify(content));
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.json({ ok: true, content, backend: 'node-llama-cpp' });
       }
     } catch (e) {
@@ -213,9 +234,14 @@ app.post('/api/llm/chat', async (req, res) => {
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
       timeout: 8000, // 8秒超时 (0.5B 应该 200~500ms 出结果)
     }, (resp) => {
-      let d = '';
-      resp.on('data', c => d += c);
-      resp.on('end', () => resolve({ status: resp.statusCode, body: d }));
+      // 关键修复: 先用 Buffer 收集所有 chunk, 最后统一 toString('utf8')
+      // 避免跨 chunk 的 UTF-8 多字节字符被切开导致乱码
+      const chunks = [];
+      resp.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      resp.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        resolve({ status: resp.statusCode, body: buf.toString('utf8') });
+      });
     });
     req2.on('error', (e) => resolve({ status: 0, error: e.message }));
     req2.on('timeout', () => { req2.destroy(); resolve({ status: 0, error: 'timeout' }); });
@@ -233,6 +259,10 @@ app.post('/api/llm/chat', async (req, res) => {
     const content = backend.type === 'ollama'
       ? (parsed.message?.content || '')
       : (parsed.choices?.[0]?.message?.content || '');
+    // 调试日志: 打印 LLM 原始输出 (方便排查乱码)
+    console.log(`[LLM][${backend.name}] raw=`, JSON.stringify(content));
+    // 显式设置 charset 防止浏览器误解编码
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.json({ ok: true, content, backend: backend.name });
   } catch (e) {
     res.json({ ok: false, error: e.message, fallback: true });
